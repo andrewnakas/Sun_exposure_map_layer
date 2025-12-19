@@ -1,0 +1,24 @@
+🌐 DEPLOYMENT URL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Live Site:
+https://andrewnakas.github.io/Sun_exposure_map_layer/
+
+Repository:
+https://github.com/andrewnakas/Sun_exposure_map_layer
+
+Deployment Status:
+https://github.com/andrewnakas/Sun_exposure_map_layer/actions/workflows/deploy.yml
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📝 DEPLOYMENT INFO
+
+Branch: claude/solar-exposure-leaflet-map-HTXcs
+Deployment Method: GitHub Actions → gh-pages branch
+Auto-deploys on: Every push to this branch
+
+Check Actions tab to see deployment status:
+✓ Green checkmark = Successfully deployed
+✗ Red X = Deployment failed
+🟡 Yellow dot = Deployment in progress
