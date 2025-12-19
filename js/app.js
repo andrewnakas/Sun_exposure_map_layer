@@ -10,6 +10,7 @@ class SolarExposureMap {
         this.currentDate = new Date();
         this.animationInterval = null;
         this.terrainCache = new Map();
+        this.tileCache = new Map();
         this.tileSize = 512;
         this.showShadows = true;
         this.showAspect = true;
@@ -17,6 +18,9 @@ class SolarExposureMap {
         // Default location (Rocky Mountains - great for skiing!)
         this.defaultCenter = [39.7392, -104.9903]; // Denver area
         this.defaultZoom = 12;
+
+        // Terrain-RGB tile source (free, no API key needed)
+        this.terrainTileUrl = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png';
 
         this.init();
     }
@@ -296,20 +300,21 @@ class SolarExposureMap {
     }
 
     async getTerrainData(lat, lng, zoom) {
-        // Use Mapbox Terrain-RGB for elevation data
-        // For demonstration, we'll use a simplified model
-        // In production, you'd fetch actual terrain tiles
-
         const key = `${lat.toFixed(4)},${lng.toFixed(4)}`;
 
         if (this.terrainCache.has(key)) {
             return this.terrainCache.get(key);
         }
 
-        // Simulate terrain data based on noise function
-        // In production, replace with actual DEM data
-        const elevation = this.simulateElevation(lat, lng);
-        const { aspect, slope } = this.calculateSlopeAspect(lat, lng);
+        // Get real elevation from terrain tiles
+        const elevation = await this.getRealElevation(lat, lng, zoom);
+
+        if (elevation === null) {
+            return null;
+        }
+
+        // Calculate slope and aspect from real terrain
+        const { aspect, slope } = await this.calculateRealSlopeAspect(lat, lng, zoom);
 
         const data = { elevation, aspect, slope };
         this.terrainCache.set(key, data);
@@ -323,34 +328,112 @@ class SolarExposureMap {
         return data;
     }
 
-    simulateElevation(lat, lng) {
-        // Simplified elevation simulation using sine waves
-        // Replace with actual DEM data in production
-        const x = lng * 100;
-        const y = lat * 100;
-
-        const base = 1000;
-        const variation = 500 * (
-            Math.sin(x / 10) * Math.cos(y / 10) +
-            Math.sin(x / 5) * 0.5 +
-            Math.cos(y / 7) * 0.3
-        );
-
-        return base + variation;
+    latLngToTile(lat, lng, zoom) {
+        // Convert lat/lng to tile coordinates
+        const x = Math.floor((lng + 180) / 360 * Math.pow(2, zoom));
+        const y = Math.floor((1 - Math.log(Math.tan(lat * Math.PI / 180) + 1 / Math.cos(lat * Math.PI / 180)) / Math.PI) / 2 * Math.pow(2, zoom));
+        return { x, y, z: zoom };
     }
 
-    calculateSlopeAspect(lat, lng) {
-        // Calculate slope and aspect using elevation gradient
+    async loadTerrainTile(tileX, tileY, zoom) {
+        const tileKey = `${zoom}/${tileX}/${tileY}`;
+
+        if (this.tileCache.has(tileKey)) {
+            return this.tileCache.get(tileKey);
+        }
+
+        try {
+            const url = this.terrainTileUrl
+                .replace('{z}', zoom)
+                .replace('{x}', tileX)
+                .replace('{y}', tileY);
+
+            const img = await this.loadImage(url);
+
+            // Draw to canvas to get pixel data
+            const canvas = document.createElement('canvas');
+            canvas.width = this.tileSize;
+            canvas.height = this.tileSize;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+
+            const imageData = ctx.getImageData(0, 0, this.tileSize, this.tileSize);
+
+            this.tileCache.set(tileKey, imageData);
+
+            // Limit tile cache size
+            if (this.tileCache.size > 50) {
+                const firstKey = this.tileCache.keys().next().value;
+                this.tileCache.delete(firstKey);
+            }
+
+            return imageData;
+        } catch (error) {
+            console.error('Error loading terrain tile:', error);
+            return null;
+        }
+    }
+
+    loadImage(url) {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.onload = () => resolve(img);
+            img.onerror = reject;
+            img.src = url;
+        });
+    }
+
+    decodeTerrainRGB(r, g, b) {
+        // Terrarium format: elevation = (R * 256 + G + B / 256) - 32768
+        return (r * 256 + g + b / 256) - 32768;
+    }
+
+    async getRealElevation(lat, lng, zoom) {
+        const tile = this.latLngToTile(lat, lng, zoom);
+        const tileData = await this.loadTerrainTile(tile.x, tile.y, zoom);
+
+        if (!tileData) return null;
+
+        // Convert lat/lng to pixel position within tile
+        const scale = Math.pow(2, zoom);
+        const worldX = (lng + 180) / 360 * scale;
+        const worldY = (1 - Math.log(Math.tan(lat * Math.PI / 180) + 1 / Math.cos(lat * Math.PI / 180)) / Math.PI) / 2 * scale;
+
+        const pixelX = Math.floor((worldX - tile.x) * this.tileSize);
+        const pixelY = Math.floor((worldY - tile.y) * this.tileSize);
+
+        if (pixelX < 0 || pixelX >= this.tileSize || pixelY < 0 || pixelY >= this.tileSize) {
+            return null;
+        }
+
+        const idx = (pixelY * this.tileSize + pixelX) * 4;
+        const r = tileData.data[idx];
+        const g = tileData.data[idx + 1];
+        const b = tileData.data[idx + 2];
+
+        return this.decodeTerrainRGB(r, g, b);
+    }
+
+    async calculateRealSlopeAspect(lat, lng, zoom) {
+        // Get elevations at neighboring points
         const delta = 0.0001; // ~11 meters
 
-        const elevCenter = this.simulateElevation(lat, lng);
-        const elevNorth = this.simulateElevation(lat + delta, lng);
-        const elevSouth = this.simulateElevation(lat - delta, lng);
-        const elevEast = this.simulateElevation(lat, lng + delta);
-        const elevWest = this.simulateElevation(lat, lng - delta);
+        const elevCenter = await this.getRealElevation(lat, lng, zoom);
+        const elevNorth = await this.getRealElevation(lat + delta, lng, zoom);
+        const elevSouth = await this.getRealElevation(lat - delta, lng, zoom);
+        const elevEast = await this.getRealElevation(lat, lng + delta, zoom);
+        const elevWest = await this.getRealElevation(lat, lng - delta, zoom);
 
-        // Calculate gradients
-        const dzdx = (elevEast - elevWest) / (2 * delta * 111320); // meters per degree
+        // If any elevation is null, return flat terrain
+        if (elevCenter === null || elevNorth === null || elevSouth === null ||
+            elevEast === null || elevWest === null) {
+            return { aspect: 0, slope: 0 };
+        }
+
+        // Calculate gradients in meters
+        const metersPerDegree = 111320 * Math.cos(lat * Math.PI / 180);
+        const dzdx = (elevEast - elevWest) / (2 * delta * metersPerDegree);
         const dzdy = (elevNorth - elevSouth) / (2 * delta * 111320);
 
         // Calculate slope (in degrees)
