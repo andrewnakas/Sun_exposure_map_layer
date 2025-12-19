@@ -1,6 +1,18 @@
 # ☀️ Solar Exposure Map - Terrain Sun & Shadow Analysis
 
+[![Deploy to GitHub Pages](https://github.com/andrewnakas/Sun_exposure_map_layer/actions/workflows/deploy.yml/badge.svg)](https://github.com/andrewnakas/Sun_exposure_map_layer/actions/workflows/deploy.yml)
+
 An interactive web application that calculates and visualizes real-time sun exposure on terrain, considering slope aspect, terrain shadows, and the precise position of the sun based on date, time, and location.
+
+---
+
+## 🌐 **LIVE DEMO**
+
+### **🔗 [https://andrewnakas.github.io/Sun_exposure_map_layer/](https://andrewnakas.github.io/Sun_exposure_map_layer/)**
+
+**Try it now!** Pan to mountainous terrain, adjust the time slider, and watch sun exposure change in real-time.
+
+---
 
 ## 🎯 Features
 
