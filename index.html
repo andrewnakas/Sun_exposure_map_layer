@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Solar Exposure Map - Terrain Sun & Shadow Analysis</title>
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            overflow: hidden;
+        }
+
+        #map {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            z-index: 1;
+        }
+
+        .info-panel {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: white;
+            padding: 15px 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            z-index: 1000;
+            max-width: 300px;
+            font-size: 14px;
+        }
+
+        .info-panel h2 {
+            margin: 0 0 10px 0;
+            font-size: 18px;
+            color: #333;
+        }
+
+        .info-panel .stat {
+            margin: 8px 0;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .info-panel .label {
+            font-weight: 600;
+            color: #666;
+        }
+
+        .info-panel .value {
+            color: #333;
+        }
+
+        .controls-panel {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+            z-index: 1000;
+            min-width: 400px;
+        }
+
+        .controls-panel h3 {
+            margin: 0 0 15px 0;
+            font-size: 16px;
+            color: #333;
+            text-align: center;
+        }
+
+        .control-group {
+            margin: 12px 0;
+        }
+
+        .control-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 13px;
+            font-weight: 600;
+            color: #555;
+        }
+
+        .control-group input[type="range"] {
+            width: 100%;
+            margin: 5px 0;
+        }
+
+        .control-group input[type="date"],
+        .control-group input[type="time"] {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+
+        .time-display {
+            text-align: center;
+            font-size: 20px;
+            font-weight: 600;
+            color: #ff6b00;
+            margin: 10px 0;
+            padding: 10px;
+            background: #fff5e6;
+            border-radius: 6px;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .button-group button {
+            flex: 1;
+            padding: 10px;
+            border: none;
+            border-radius: 6px;
+            background: #007bff;
+            color: white;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .button-group button:hover {
+            background: #0056b3;
+        }
+
+        .button-group button.secondary {
+            background: #6c757d;
+        }
+
+        .button-group button.secondary:hover {
+            background: #545b62;
+        }
+
+        .legend {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            z-index: 1000;
+        }
+
+        .legend h4 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+            color: #333;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin: 5px 0;
+            font-size: 12px;
+        }
+
+        .legend-color {
+            width: 30px;
+            height: 15px;
+            margin-right: 8px;
+            border: 1px solid #ccc;
+            border-radius: 2px;
+        }
+
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 255, 255, 0.95);
+            padding: 30px 40px;
+            border-radius: 10px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+            z-index: 2000;
+            text-align: center;
+            display: none;
+        }
+
+        .loading.active {
+            display: block;
+        }
+
+        .loading-spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #007bff;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .aspect-overlay {
+            pointer-events: none;
+        }
+
+        #info-popup {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.85);
+            color: white;
+            padding: 10px 15px;
+            border-radius: 6px;
+            font-size: 12px;
+            display: none;
+            z-index: 1500;
+            pointer-events: none;
+            max-width: 250px;
+        }
+
+        #info-popup.active {
+            display: block;
+        }
+
+        .toggle-switch {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin: 10px 0;
+        }
+
+        .toggle-switch input[type="checkbox"] {
+            width: 45px;
+            height: 24px;
+            position: relative;
+            cursor: pointer;
+            appearance: none;
+            background: #ccc;
+            border-radius: 12px;
+            transition: background 0.3s;
+        }
+
+        .toggle-switch input[type="checkbox"]:checked {
+            background: #007bff;
+        }
+
+        .toggle-switch input[type="checkbox"]::before {
+            content: '';
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: white;
+            top: 2px;
+            left: 2px;
+            transition: transform 0.3s;
+        }
+
+        .toggle-switch input[type="checkbox"]:checked::before {
+            transform: translateX(21px);
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+
+    <div class="info-panel">
+        <h2>☀️ Solar Position</h2>
+        <div class="stat">
+            <span class="label">Azimuth:</span>
+            <span class="value" id="sun-azimuth">--°</span>
+        </div>
+        <div class="stat">
+            <span class="label">Altitude:</span>
+            <span class="value" id="sun-altitude">--°</span>
+        </div>
+        <div class="stat">
+            <span class="label">Location:</span>
+            <span class="value" id="location">--</span>
+        </div>
+        <div class="stat">
+            <span class="label">Elevation:</span>
+            <span class="value" id="elevation">--</span>
+        </div>
+        <hr style="margin: 10px 0; border: none; border-top: 1px solid #eee;">
+        <div class="stat">
+            <span class="label">Slope Aspect:</span>
+            <span class="value" id="aspect">--</span>
+        </div>
+        <div class="stat">
+            <span class="label">Slope Angle:</span>
+            <span class="value" id="slope">--</span>
+        </div>
+        <div class="stat">
+            <span class="label">Exposure:</span>
+            <span class="value" id="exposure-value">--</span>
+        </div>
+    </div>
+
+    <div class="controls-panel">
+        <h3>⏰ Time & Date Controls</h3>
+
+        <div class="control-group">
+            <label for="date-input">Date:</label>
+            <input type="date" id="date-input">
+        </div>
+
+        <div class="control-group">
+            <label for="time-slider">Time: <span id="time-display">12:00</span></label>
+            <input type="range" id="time-slider" min="0" max="1440" step="15" value="720">
+        </div>
+
+        <div class="toggle-switch">
+            <label>Show Shadows</label>
+            <input type="checkbox" id="shadow-toggle" checked>
+        </div>
+
+        <div class="toggle-switch">
+            <label>Show Slope Aspect</label>
+            <input type="checkbox" id="aspect-toggle" checked>
+        </div>
+
+        <div class="button-group">
+            <button id="now-button">Now</button>
+            <button id="animate-button" class="secondary">Animate Day</button>
+        </div>
+    </div>
+
+    <div class="legend">
+        <h4>Sun Exposure</h4>
+        <div class="legend-item">
+            <div class="legend-color" style="background: #001a4d;"></div>
+            <span>Full Shadow</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background: #4d4dff;"></div>
+            <span>Shaded (North)</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background: #ffff00;"></div>
+            <span>Morning Sun (East)</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background: #ff8000;"></div>
+            <span>Afternoon Sun (West)</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background: #ff0000;"></div>
+            <span>Full Sun (South)</span>
+        </div>
+    </div>
+
+    <div id="info-popup"></div>
+
+    <div class="loading" id="loading">
+        <div class="loading-spinner"></div>
+        <div>Calculating terrain exposure...</div>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <!-- SunCalc for astronomical calculations -->
+    <script src="https://cdn.jsdelivr.net/npm/suncalc@1.9.0/suncalc.js"></script>
+
+    <!-- Main Application Script -->
+    <script src="js/app.js"></script>
+</body>
+</html>
