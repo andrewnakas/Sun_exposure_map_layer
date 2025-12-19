@@ -92,6 +92,27 @@ class SolarExposureMap {
 
         // Aspect toggle
         document.getElementById('aspect-toggle').checked = this.showAspect;
+
+        // Setup drawer toggle
+        const drawer = document.getElementById('drawer');
+        const drawerHandle = document.getElementById('drawer-handle');
+        drawerHandle.addEventListener('click', () => {
+            drawer.classList.toggle('minimized');
+        });
+
+        // Setup info button toggle
+        const infoBtn = document.getElementById('info-btn');
+        const infoPopup = document.getElementById('info-popup');
+        infoBtn.addEventListener('click', () => {
+            infoPopup.classList.toggle('active');
+        });
+
+        // Close info popup when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!infoBtn.contains(e.target) && !infoPopup.contains(e.target)) {
+                infoPopup.classList.remove('active');
+            }
+        });
     }
 
     setupEventListeners() {
@@ -152,7 +173,7 @@ class SolarExposureMap {
         const hours = Math.floor(minutes / 60);
         const mins = minutes % 60;
         const timeStr = `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
-        document.getElementById('time-display').textContent = timeStr;
+        document.getElementById('drawer-time').textContent = timeStr;
     }
 
     updateSunPosition() {
@@ -166,8 +187,15 @@ class SolarExposureMap {
         this.sunAzimuth = azimuth;
         this.sunAltitude = altitude;
 
-        document.getElementById('sun-azimuth').textContent = azimuth.toFixed(1) + '°';
-        document.getElementById('sun-altitude').textContent = altitude.toFixed(1) + '°';
+        // Update sun badge
+        const sunBadge = document.getElementById('sun-badge');
+        if (altitude < 0) {
+            sunBadge.textContent = '🌙 Night';
+        } else if (altitude < 10) {
+            sunBadge.textContent = '🌅 ' + azimuth.toFixed(0) + '°';
+        } else {
+            sunBadge.textContent = '☀ ' + azimuth.toFixed(0) + '° / ' + altitude.toFixed(0) + '°';
+        }
     }
 
     updateLocationDisplay() {
@@ -595,12 +623,14 @@ class SolarExposureMap {
             // Stop animation
             clearInterval(this.animationInterval);
             this.animationInterval = null;
-            button.textContent = 'Animate Day';
-            button.classList.add('secondary');
+            button.textContent = 'Animate';
+            button.classList.add('btn-secondary');
+            button.classList.remove('btn-primary');
         } else {
             // Start animation
-            button.textContent = 'Stop Animation';
-            button.classList.remove('secondary');
+            button.textContent = 'Stop';
+            button.classList.add('btn-primary');
+            button.classList.remove('btn-secondary');
 
             const slider = document.getElementById('time-slider');
             const startMinutes = parseInt(slider.value);
