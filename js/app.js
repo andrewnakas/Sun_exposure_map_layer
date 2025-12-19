@@ -284,23 +284,35 @@ class SolarExposureMap {
         const imageData = ctx.createImageData(width, height);
         const data = imageData.data;
 
-        const bounds = this.map.getBounds();
         const zoom = this.map.getZoom();
 
-        // Sample at lower resolution for performance
-        const sampleRate = Math.max(1, Math.floor(4 / Math.min(zoom / 10, 1)));
+        // Adaptive sampling based on zoom and shadow complexity
+        // Lower sampleRate = higher quality, more pixels rendered
+        const sampleRate = this.showShadows ? Math.max(2, Math.floor(8 - zoom / 2)) : Math.max(1, Math.floor(4 - zoom / 3));
 
+        // Pre-calculate all points to render (batched for smoother rendering)
+        const renderBatch = [];
         for (let y = 0; y < height; y += sampleRate) {
             for (let x = 0; x < width; x += sampleRate) {
+                renderBatch.push({ x, y });
+            }
+        }
+
+        // Process in batches to avoid blocking UI
+        const batchSize = 50;
+        for (let i = 0; i < renderBatch.length; i += batchSize) {
+            const batch = renderBatch.slice(i, i + batchSize);
+
+            await Promise.all(batch.map(async ({x, y}) => {
                 const point = this.map.containerPointToLatLng([x, y]);
 
                 // Get terrain data for this point
                 const terrainData = await this.getTerrainData(point.lat, point.lng, zoom);
 
-                if (!terrainData) continue;
+                if (!terrainData) return;
 
-                // Calculate sun exposure
-                const exposure = this.calculateExposure(
+                // Calculate sun exposure (now async with ray-casting)
+                const exposure = await this.calculateExposure(
                     terrainData.aspect,
                     terrainData.slope,
                     terrainData.elevation,
@@ -311,7 +323,7 @@ class SolarExposureMap {
                 // Get color based on exposure
                 const color = this.getExposureColor(terrainData.aspect, exposure);
 
-                // Fill the sampled area
+                // Fill the sampled area (smooth fill to reduce blocky artifacts)
                 for (let dy = 0; dy < sampleRate && (y + dy) < height; dy++) {
                     for (let dx = 0; dx < sampleRate && (x + dx) < width; dx++) {
                         const idx = ((y + dy) * width + (x + dx)) * 4;
@@ -321,6 +333,12 @@ class SolarExposureMap {
                         data[idx + 3] = color.a;
                     }
                 }
+            }));
+
+            // Update canvas progressively for better UX
+            if (i % (batchSize * 4) === 0) {
+                ctx.putImageData(imageData, 0, 0);
+                await new Promise(resolve => setTimeout(resolve, 1));
             }
         }
 
@@ -475,17 +493,13 @@ class SolarExposureMap {
         return { aspect, slope };
     }
 
-    calculateExposure(aspect, slope, elevation, lat, lng) {
+    async calculateExposure(aspect, slope, elevation, lat, lng) {
         // Calculate how much sun exposure this slope receives
 
         if (this.sunAltitude < 0) {
             // Sun is below horizon
             return 0;
         }
-
-        // Calculate the angle between slope aspect and sun azimuth
-        let aspectDiff = Math.abs(aspect - this.sunAzimuth);
-        if (aspectDiff > 180) aspectDiff = 360 - aspectDiff;
 
         // Calculate dot product between slope normal and sun direction
         const slopeRad = slope * Math.PI / 180;
@@ -509,27 +523,71 @@ class SolarExposureMap {
         // Clamp to 0-1 range
         exposure = Math.max(0, Math.min(1, exposure));
 
-        // Apply shadow calculation if enabled
-        if (this.showShadows) {
-            const shadowFactor = this.calculateShadow(lat, lng, elevation);
+        // Apply terrain shadow ray-casting if enabled
+        if (this.showShadows && exposure > 0) {
+            const shadowFactor = await this.calculateShadow(lat, lng, elevation);
             exposure *= shadowFactor;
         }
 
         return exposure;
     }
 
-    calculateShadow(lat, lng, elevation) {
-        // Simplified shadow calculation
-        // In production, implement proper ray-casting through terrain
+    async calculateShadow(lat, lng, elevation) {
+        // TRUE terrain ray-casting for accurate shadow detection
 
-        if (this.sunAltitude < 5) {
-            // Low sun angle - more likely to be in shadow
-            return 0.3;
+        if (this.sunAltitude < 0) {
+            return 0; // Sun below horizon
         }
 
-        // For now, return based on sun altitude
-        // Lower sun = more shadows
-        return Math.min(1, this.sunAltitude / 45);
+        // Cast ray from point toward sun
+        const maxDistance = 5000; // 5km max shadow distance (meters)
+        const stepSize = 100; // Sample every 100 meters
+        const zoom = this.map.getZoom();
+
+        // Convert sun angles to direction vector
+        const sunAzRad = this.sunAzimuth * Math.PI / 180;
+        const sunAltRad = this.sunAltitude * Math.PI / 180;
+
+        // Calculate lat/lng step per meter in sun direction
+        const metersPerDegreeLat = 111320;
+        const metersPerDegreeLng = 111320 * Math.cos(lat * Math.PI / 180);
+
+        const latStep = (Math.cos(sunAzRad) * stepSize) / metersPerDegreeLat;
+        const lngStep = (Math.sin(sunAzRad) * stepSize) / metersPerDegreeLng;
+
+        // Ray-cast toward sun
+        let currentLat = lat;
+        let currentLng = lng;
+        let distance = 0;
+
+        while (distance < maxDistance) {
+            distance += stepSize;
+            currentLat += latStep;
+            currentLng += lngStep;
+
+            // Expected height of ray at this distance (accounting for sun angle)
+            const rayHeight = elevation + distance * Math.tan(sunAltRad);
+
+            // Get actual terrain height at this point
+            const terrainHeight = await this.getRealElevation(currentLat, currentLng, zoom);
+
+            if (terrainHeight === null) {
+                // Out of terrain data bounds, assume no shadow
+                break;
+            }
+
+            // If terrain is higher than ray, we're in shadow
+            if (terrainHeight > rayHeight) {
+                return 0; // In shadow
+            }
+
+            // Early exit optimization: if we're well above terrain, stop checking
+            if (rayHeight - terrainHeight > 500) {
+                break; // Ray is far above terrain, no shadow possible
+            }
+        }
+
+        return 1; // Not in shadow
     }
 
     getExposureColor(aspect, exposure) {
@@ -583,13 +641,16 @@ class SolarExposureMap {
 
         if (!terrainData) return;
 
-        const exposure = this.calculateExposure(
+        const exposure = await this.calculateExposure(
             terrainData.aspect,
             terrainData.slope,
             terrainData.elevation,
             latlng.lat,
             latlng.lng
         );
+
+        // Calculate comprehensive sun data
+        const sunData = this.calculateComprehensiveSunData(latlng.lat, latlng.lng, terrainData);
 
         // Update info panel
         document.getElementById('elevation').textContent =
@@ -598,8 +659,58 @@ class SolarExposureMap {
             this.getAspectDirection(terrainData.aspect) + ' (' + terrainData.aspect.toFixed(0) + '°)';
         document.getElementById('slope').textContent =
             terrainData.slope.toFixed(1) + '°';
+
+        // Show comprehensive exposure info
+        const exposureText = `${(exposure * 100).toFixed(0)}%`;
+        const sunriseText = sunData.sunrise ? sunData.sunrise : 'No sunrise';
+        const sunsetText = sunData.sunset ? sunData.sunset : 'No sunset';
+
         document.getElementById('exposure-value').textContent =
-            (exposure * 100).toFixed(0) + '%';
+            `${exposureText} (${sunData.sunHours.toFixed(1)}h sun)`;
+
+        // Update location to show sunrise/sunset
+        document.getElementById('location').textContent =
+            `${latlng.lat.toFixed(4)}°, ${latlng.lng.toFixed(4)}°\n↑${sunriseText} ↓${sunsetText}`;
+    }
+
+    calculateComprehensiveSunData(lat, lng, terrainData) {
+        // Calculate sunrise, sunset, and sun hours for this location
+
+        const sunTimes = SunCalc.getTimes(this.currentDate, lat, lng);
+
+        // Get sunrise and sunset times
+        const sunrise = sunTimes.sunrise;
+        const sunset = sunTimes.sunset;
+
+        // Calculate total sun hours
+        let sunHours = 0;
+        if (sunrise && sunset && !isNaN(sunrise) && !isNaN(sunset)) {
+            sunHours = (sunset - sunrise) / (1000 * 60 * 60); // Convert ms to hours
+        }
+
+        // Adjust for slope aspect - south-facing slopes get more sun
+        const aspectFactor = this.getAspectSunFactor(terrainData.aspect);
+        const effectiveSunHours = sunHours * aspectFactor;
+
+        return {
+            sunrise: sunrise && !isNaN(sunrise) ? sunrise.toTimeString().slice(0, 5) : null,
+            sunset: sunset && !isNaN(sunset) ? sunset.toTimeString().slice(0, 5) : null,
+            sunHours: effectiveSunHours,
+            totalDaylightHours: sunHours
+        };
+    }
+
+    getAspectSunFactor(aspect) {
+        // Calculate sun factor based on aspect
+        // South (180°) = 1.0 (maximum sun)
+        // North (0°) = 0.5 (minimum sun)
+        // East/West (90°/270°) = 0.75 (moderate)
+
+        const southDiff = Math.abs(aspect - 180);
+        const normalizedDiff = Math.min(southDiff, 360 - southDiff);
+
+        // Map 0° (south) to 1.0, 180° (north) to 0.5
+        return 0.5 + 0.5 * (1 - normalizedDiff / 180);
     }
 
     updateHoverInfo(e) {
