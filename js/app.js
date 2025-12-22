@@ -56,11 +56,10 @@ class SolarExposureMap {
         // Listen to map movements
         this.map.on('moveend', () => {
             this.updateLocationDisplay();
-            this.updateExposureLayer();
         });
 
         this.map.on('zoomend', () => {
-            this.updateExposureLayer();
+            // Aspect overlay updates handled by toggle only
         });
 
         // Click handler for detailed info
@@ -121,7 +120,6 @@ class SolarExposureMap {
             const [year, month, day] = e.target.value.split('-');
             this.currentDate.setFullYear(year, month - 1, day);
             this.updateSunPosition();
-            this.updateExposureLayer();
         });
 
         // Time slider
@@ -134,7 +132,6 @@ class SolarExposureMap {
             this.currentDate.setHours(hours, mins);
 
             this.updateSunPosition();
-            this.updateExposureLayer();
         });
 
         // Now button
@@ -148,7 +145,6 @@ class SolarExposureMap {
             this.updateTimeDisplay(minutes);
 
             this.updateSunPosition();
-            this.updateExposureLayer();
         });
 
         // Animate button
@@ -156,10 +152,9 @@ class SolarExposureMap {
             this.toggleAnimation();
         });
 
-        // Shadow toggle
+        // Shadow toggle - affects click calculations only
         document.getElementById('shadow-toggle').addEventListener('change', (e) => {
             this.showShadows = e.target.checked;
-            this.updateExposureLayer();
         });
 
         // Aspect toggle
@@ -205,7 +200,7 @@ class SolarExposureMap {
     }
 
     createExposureLayer() {
-        // Create a canvas overlay for the exposure layer
+        // Simple aspect overlay (optional) - no ray-casting
         const ExposureOverlay = L.Layer.extend({
             onAdd: function(map) {
                 this._map = map;
@@ -248,11 +243,21 @@ class SolarExposureMap {
         this.exposureLayer = new ExposureOverlay();
         this.exposureLayer.addTo(this.map);
 
-        this.updateExposureLayer();
+        // Only update on toggle, not automatically
     }
 
     async updateExposureLayer() {
-        if (!this.exposureLayer) return;
+        if (!this.exposureLayer || !this.showAspect) {
+            // Clear canvas if aspect is hidden
+            if (this.exposureLayer) {
+                const canvas = this.exposureLayer.getCanvas();
+                if (canvas) {
+                    const ctx = canvas.getContext('2d');
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                }
+            }
+            return;
+        }
 
         const canvas = this.exposureLayer.getCanvas();
         if (!canvas) return;
@@ -264,66 +269,28 @@ class SolarExposureMap {
         // Clear canvas
         ctx.clearRect(0, 0, width, height);
 
-        // Show loading
-        document.getElementById('loading').classList.add('active');
-
-        // Small delay to allow UI to update
-        await new Promise(resolve => setTimeout(resolve, 10));
-
-        try {
-            await this.renderExposure(ctx, width, height);
-        } catch (error) {
-            console.error('Error rendering exposure:', error);
-        }
-
-        // Hide loading
-        document.getElementById('loading').classList.remove('active');
+        // Simple aspect rendering (NO shadows, NO ray-casting)
+        await this.renderSimpleAspect(ctx, width, height);
     }
 
-    async renderExposure(ctx, width, height) {
+    async renderSimpleAspect(ctx, width, height) {
         const imageData = ctx.createImageData(width, height);
         const data = imageData.data;
-
         const zoom = this.map.getZoom();
 
-        // Adaptive sampling based on zoom and shadow complexity
-        // Lower sampleRate = higher quality, more pixels rendered
-        const sampleRate = this.showShadows ? Math.max(2, Math.floor(8 - zoom / 2)) : Math.max(1, Math.floor(4 - zoom / 3));
+        // Coarse sampling for aspect overlay
+        const sampleRate = Math.max(4, Math.floor(16 - zoom));
 
-        // Pre-calculate all points to render (batched for smoother rendering)
-        const renderBatch = [];
         for (let y = 0; y < height; y += sampleRate) {
             for (let x = 0; x < width; x += sampleRate) {
-                renderBatch.push({ x, y });
-            }
-        }
-
-        // Process in batches to avoid blocking UI
-        const batchSize = 50;
-        for (let i = 0; i < renderBatch.length; i += batchSize) {
-            const batch = renderBatch.slice(i, i + batchSize);
-
-            await Promise.all(batch.map(async ({x, y}) => {
                 const point = this.map.containerPointToLatLng([x, y]);
-
-                // Get terrain data for this point
                 const terrainData = await this.getTerrainData(point.lat, point.lng, zoom);
 
-                if (!terrainData) return;
+                if (!terrainData) continue;
 
-                // Calculate sun exposure (now async with ray-casting)
-                const exposure = await this.calculateExposure(
-                    terrainData.aspect,
-                    terrainData.slope,
-                    terrainData.elevation,
-                    point.lat,
-                    point.lng
-                );
+                // Simple aspect color (no shadow calculation)
+                const color = this.getAspectColor(terrainData.aspect);
 
-                // Get color based on exposure
-                const color = this.getExposureColor(terrainData.aspect, exposure);
-
-                // Fill the sampled area (smooth fill to reduce blocky artifacts)
                 for (let dy = 0; dy < sampleRate && (y + dy) < height; dy++) {
                     for (let dx = 0; dx < sampleRate && (x + dx) < width; dx++) {
                         const idx = ((y + dy) * width + (x + dx)) * 4;
@@ -333,16 +300,32 @@ class SolarExposureMap {
                         data[idx + 3] = color.a;
                     }
                 }
-            }));
-
-            // Update canvas progressively for better UX
-            if (i % (batchSize * 4) === 0) {
-                ctx.putImageData(imageData, 0, 0);
-                await new Promise(resolve => setTimeout(resolve, 1));
             }
         }
 
         ctx.putImageData(imageData, 0, 0);
+    }
+
+    getAspectColor(aspect) {
+        // Simple color based on aspect only
+        let baseColor;
+
+        if (aspect >= 315 || aspect < 45) {
+            baseColor = { r: 77, g: 77, b: 255 }; // North - Blue
+        } else if (aspect >= 45 && aspect < 135) {
+            baseColor = { r: 255, g: 255, b: 0 }; // East - Yellow
+        } else if (aspect >= 135 && aspect < 225) {
+            baseColor = { r: 255, g: 0, b: 0 }; // South - Red
+        } else {
+            baseColor = { r: 255, g: 128, b: 0 }; // West - Orange
+        }
+
+        return {
+            r: baseColor.r,
+            g: baseColor.g,
+            b: baseColor.b,
+            a: 100 // Light transparent
+        };
     }
 
     async getTerrainData(lat, lng, zoom) {
@@ -636,41 +619,62 @@ class SolarExposureMap {
     }
 
     async showPointInfo(latlng) {
-        const zoom = this.map.getZoom();
-        const terrainData = await this.getTerrainData(latlng.lat, latlng.lng, zoom);
+        // Show loading while calculating
+        document.getElementById('loading').classList.add('active');
 
-        if (!terrainData) return;
+        try {
+            const zoom = this.map.getZoom();
+            const terrainData = await this.getTerrainData(latlng.lat, latlng.lng, zoom);
 
-        const exposure = await this.calculateExposure(
-            terrainData.aspect,
-            terrainData.slope,
-            terrainData.elevation,
-            latlng.lat,
-            latlng.lng
-        );
+            if (!terrainData) {
+                document.getElementById('loading').classList.remove('active');
+                return;
+            }
 
-        // Calculate comprehensive sun data
-        const sunData = this.calculateComprehensiveSunData(latlng.lat, latlng.lng, terrainData);
+            // Calculate ACCURATE sun exposure with ray-casting (only for this point)
+            const exposure = await this.calculateExposure(
+                terrainData.aspect,
+                terrainData.slope,
+                terrainData.elevation,
+                latlng.lat,
+                latlng.lng
+            );
 
-        // Update info panel
-        document.getElementById('elevation').textContent =
-            Math.round(terrainData.elevation) + ' m';
-        document.getElementById('aspect').textContent =
-            this.getAspectDirection(terrainData.aspect) + ' (' + terrainData.aspect.toFixed(0) + '°)';
-        document.getElementById('slope').textContent =
-            terrainData.slope.toFixed(1) + '°';
+            // Calculate comprehensive sun data
+            const sunData = this.calculateComprehensiveSunData(latlng.lat, latlng.lng, terrainData);
 
-        // Show comprehensive exposure info
-        const exposureText = `${(exposure * 100).toFixed(0)}%`;
-        const sunriseText = sunData.sunrise ? sunData.sunrise : 'No sunrise';
-        const sunsetText = sunData.sunset ? sunData.sunset : 'No sunset';
+            // Get shadow status
+            const inShadow = exposure === 0 && this.sunAltitude > 0;
+            const shadowText = inShadow ? ' (IN SHADOW)' : '';
 
-        document.getElementById('exposure-value').textContent =
-            `${exposureText} (${sunData.sunHours.toFixed(1)}h sun)`;
+            // Update info panel
+            document.getElementById('elevation').textContent =
+                Math.round(terrainData.elevation) + ' m';
+            document.getElementById('aspect').textContent =
+                this.getAspectDirection(terrainData.aspect) + ' (' + terrainData.aspect.toFixed(0) + '°)';
+            document.getElementById('slope').textContent =
+                terrainData.slope.toFixed(1) + '°';
 
-        // Update location to show sunrise/sunset
-        document.getElementById('location').textContent =
-            `${latlng.lat.toFixed(4)}°, ${latlng.lng.toFixed(4)}°\n↑${sunriseText} ↓${sunsetText}`;
+            // Show comprehensive exposure info
+            const exposureText = `${(exposure * 100).toFixed(0)}%${shadowText}`;
+            const sunriseText = sunData.sunrise ? sunData.sunrise : 'No sunrise';
+            const sunsetText = sunData.sunset ? sunData.sunset : 'No sunset';
+
+            document.getElementById('exposure-value').textContent =
+                `${exposureText} (${sunData.sunHours.toFixed(1)}h sun)`;
+
+            // Update location to show sunrise/sunset
+            document.getElementById('location').textContent =
+                `${latlng.lat.toFixed(4)}°, ${latlng.lng.toFixed(4)}°\n↑${sunriseText} ↓${sunsetText}`;
+
+            // Auto-open info popup on click
+            document.getElementById('info-popup').classList.add('active');
+
+        } catch (error) {
+            console.error('Error calculating sun data:', error);
+        }
+
+        document.getElementById('loading').classList.remove('active');
     }
 
     calculateComprehensiveSunData(lat, lng, terrainData) {
@@ -762,7 +766,6 @@ class SolarExposureMap {
                 this.currentDate.setHours(hours, mins);
 
                 this.updateSunPosition();
-                this.updateExposureLayer();
             }, 200); // Update every 200ms for smooth animation
         }
     }
