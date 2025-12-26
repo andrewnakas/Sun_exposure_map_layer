@@ -14,6 +14,7 @@ class SolarExposureMap {
         this.tileSize = 512;
         this.showShadows = true;
         this.showAspect = true;
+        this.clickMarker = null; // Marker for clicked location
 
         // Default location (Rocky Mountains - great for skiing!)
         this.defaultCenter = [39.7392, -104.9903]; // Denver area
@@ -661,6 +662,30 @@ class SolarExposureMap {
 
         // Store clicked location
         this.clickedLocation = latlng;
+
+        // Add or update marker at clicked location
+        if (this.clickMarker) {
+            this.clickMarker.setLatLng(latlng);
+        } else {
+            // Create custom icon
+            const markerIcon = L.divIcon({
+                className: 'custom-marker',
+                html: `
+                    <div style="
+                        width: 20px;
+                        height: 20px;
+                        background: #ff6b00;
+                        border: 3px solid white;
+                        border-radius: 50%;
+                        box-shadow: 0 0 12px rgba(255,107,0,0.8);
+                    "></div>
+                `,
+                iconSize: [20, 20],
+                iconAnchor: [10, 10]
+            });
+
+            this.clickMarker = L.marker(latlng, { icon: markerIcon }).addTo(this.map);
+        }
 
         try {
             const zoom = this.map.getZoom();
