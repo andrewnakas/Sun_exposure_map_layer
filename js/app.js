@@ -19,8 +19,12 @@ class SolarExposureMap {
         this.defaultCenter = [39.7392, -104.9903]; // Denver area
         this.defaultZoom = 12;
 
-        // Terrain-RGB tile source (free, no API key needed)
+        // Terrain-RGB tile source - using Mapzen/Nextzen Terrarium tiles
+        // Alternative high-quality source with global coverage
         this.terrainTileUrl = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png';
+
+        // Backup: Try Mapbox Terrain-RGB if above fails
+        // this.terrainTileUrl = 'https://api.mapbox.com/v4/mapbox.terrain-rgb/{z}/{x}/{y}.png?access_token=YOUR_TOKEN';
 
         this.init();
     }
@@ -377,7 +381,11 @@ class SolarExposureMap {
                 .replace('{x}', tileX)
                 .replace('{y}', tileY);
 
+            console.log('Loading terrain tile from:', url);
+
             const img = await this.loadImage(url);
+
+            console.log('Image loaded:', img.width, 'x', img.height);
 
             // Draw to canvas to get pixel data
             const canvas = document.createElement('canvas');
@@ -387,6 +395,19 @@ class SolarExposureMap {
             ctx.drawImage(img, 0, 0);
 
             const imageData = ctx.getImageData(0, 0, this.tileSize, this.tileSize);
+
+            // Check if we got valid data (not all zeros)
+            let hasData = false;
+            for (let i = 0; i < imageData.data.length; i += 4) {
+                if (imageData.data[i] !== 0 || imageData.data[i+1] !== 0 || imageData.data[i+2] !== 0) {
+                    hasData = true;
+                    break;
+                }
+            }
+
+            if (!hasData) {
+                console.warn('Terrain tile appears to be all black - no valid elevation data');
+            }
 
             this.tileCache.set(tileKey, imageData);
 
