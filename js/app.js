@@ -17,7 +17,7 @@ class SolarExposureMap {
 
         // Default location (Rocky Mountains - great for skiing!)
         this.defaultCenter = [39.7392, -104.9903]; // Denver area
-        this.defaultZoom = 12;
+        this.defaultZoom = 15; // Terrarium tiles work best at zoom 15
 
         // Terrain-RGB tile source - using Mapzen/Nextzen Terrarium tiles
         // Alternative high-quality source with global coverage
@@ -472,6 +472,12 @@ class SolarExposureMap {
 
         console.log('RGB values:', r, g, b);
 
+        // Check if pixel is blank (no data)
+        if (r === 0 && g === 0 && b === 0) {
+            console.warn('No elevation data at this pixel - tile may be incomplete');
+            return null;
+        }
+
         const elevation = this.decodeTerrainRGB(r, g, b);
         console.log('Decoded elevation:', elevation);
 
@@ -665,12 +671,14 @@ class SolarExposureMap {
 
             if (!terrainData) {
                 console.error('No terrain data available for this location');
-                document.getElementById('elevation').textContent = 'No data';
-                document.getElementById('aspect').textContent = 'No data';
-                document.getElementById('slope').textContent = 'No data';
-                document.getElementById('exposure-value').textContent = 'No data';
+                console.log('Try: 1) Different zoom level (12-14 works best), 2) Different location, 3) Major mountain ranges');
+
+                document.getElementById('elevation').textContent = 'No elevation data';
+                document.getElementById('aspect').textContent = 'Try zoom 12-14';
+                document.getElementById('slope').textContent = 'or different area';
+                document.getElementById('exposure-value').textContent = 'Tiles may not exist here';
                 document.getElementById('location').textContent =
-                    `${latlng.lat.toFixed(4)}°, ${latlng.lng.toFixed(4)}°`;
+                    `${latlng.lat.toFixed(4)}°, ${latlng.lng.toFixed(4)}°\nTry: Rockies, Alps, Cascades`;
                 document.getElementById('info-popup').classList.add('active');
                 document.getElementById('loading').classList.remove('active');
                 return;
