@@ -95,26 +95,11 @@ class SolarExposureMap {
         // Aspect toggle
         document.getElementById('aspect-toggle').checked = this.showAspect;
 
-        // Setup drawer toggle
-        const drawer = document.getElementById('drawer');
-        const drawerHandle = document.getElementById('drawer-handle');
-        drawerHandle.addEventListener('click', () => {
-            drawer.classList.toggle('minimized');
-        });
+        // Old drawer replaced with controls-drawer and solar-sidebar in new UI
+        // Sidebar toggle handled in index.html inline script
 
-        // Setup info button toggle
-        const infoBtn = document.getElementById('info-btn');
-        const infoPopup = document.getElementById('info-popup');
-        infoBtn.addEventListener('click', () => {
-            infoPopup.classList.toggle('active');
-        });
-
-        // Close info popup when clicking outside
-        document.addEventListener('click', (e) => {
-            if (!infoBtn.contains(e.target) && !infoPopup.contains(e.target)) {
-                infoPopup.classList.remove('active');
-            }
-        });
+        // Info button and popup removed in new UI design
+        // Solar data now shown in sidebar
     }
 
     setupEventListeners() {
@@ -171,7 +156,18 @@ class SolarExposureMap {
         const hours = Math.floor(minutes / 60);
         const mins = minutes % 60;
         const timeStr = `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
-        document.getElementById('drawer-time').textContent = timeStr;
+
+        // Update desktop time display
+        const desktopDisplay = document.getElementById('time-display');
+        if (desktopDisplay) {
+            desktopDisplay.textContent = timeStr;
+        }
+
+        // Update mobile time display
+        const mobileDisplay = document.getElementById('time-display-mobile');
+        if (mobileDisplay) {
+            mobileDisplay.textContent = timeStr;
+        }
     }
 
     updateSunPosition() {
@@ -197,9 +193,8 @@ class SolarExposureMap {
     }
 
     updateLocationDisplay() {
-        const center = this.map.getCenter();
-        document.getElementById('location').textContent =
-            `${center.lat.toFixed(4)}°, ${center.lng.toFixed(4)}°`;
+        // Location now displayed in sidebar when point is clicked
+        // No need to update on map move
     }
 
     createExposureLayer() {
