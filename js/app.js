@@ -856,7 +856,7 @@ class SolarExposureMap {
         let terrainSunrise = sunTimes.sunrise;
         let terrainSunset = sunTimes.sunset;
 
-        // Check if terrain blocks sunrise
+        // Check if terrain blocks sunrise (eastern mountains)
         if (sunTimes.sunrise && !isNaN(sunTimes.sunrise)) {
             const sunrisePos = SunCalc.getPosition(sunTimes.sunrise, lat, lng);
             const sunriseAlt = sunrisePos.altitude * 180 / Math.PI;
@@ -871,11 +871,55 @@ class SolarExposureMap {
                     const testAlt = testPos.altitude * 180 / Math.PI;
 
                     if (testAlt > 0) {
+                        // Update temp sun position for shadow check
+                        const oldAlt = this.sunAltitude;
+                        const oldAz = this.sunAzimuth;
+                        this.sunAltitude = testAlt;
+                        this.sunAzimuth = ((testPos.azimuth * 180 / Math.PI) + 180) % 360;
+
                         const shadow = await this.calculateShadow(lat, lng, elevation);
+
+                        // Restore sun position
+                        this.sunAltitude = oldAlt;
+                        this.sunAzimuth = oldAz;
+
                         if (shadow > 0) {
                             terrainSunrise = testDate;
                             break;
                         }
+                    }
+                }
+            }
+        }
+
+        // Check if terrain blocks sunset (western mountains) - NEW!
+        if (sunTimes.sunset && !isNaN(sunTimes.sunset)) {
+            const testDate = new Date(sunTimes.sunset);
+            // Check backwards from sunset for when terrain starts blocking
+            for (let i = 0; i < 120; i += 5) {
+                testDate.setMinutes(testDate.getMinutes() - 5);
+                const testPos = SunCalc.getPosition(testDate, lat, lng);
+                const testAlt = testPos.altitude * 180 / Math.PI;
+
+                if (testAlt > 0) {
+                    // Update temp sun position for shadow check
+                    const oldAlt = this.sunAltitude;
+                    const oldAz = this.sunAzimuth;
+                    this.sunAltitude = testAlt;
+                    this.sunAzimuth = ((testPos.azimuth * 180 / Math.PI) + 180) % 360;
+
+                    const shadow = await this.calculateShadow(lat, lng, elevation);
+
+                    // Restore sun position
+                    this.sunAltitude = oldAlt;
+                    this.sunAzimuth = oldAz;
+
+                    if (shadow > 0) {
+                        // Sun is NOT blocked at this time, keep checking earlier
+                        terrainSunset = testDate;
+                    } else {
+                        // Sun is blocked, we found the last unblocked time
+                        break;
                     }
                 }
             }
