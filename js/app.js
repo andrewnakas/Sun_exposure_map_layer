@@ -17,14 +17,17 @@ class SolarExposureMap {
 
         // Default location (Rocky Mountains - great for skiing!)
         this.defaultCenter = [39.7392, -104.9903]; // Denver area
-        this.defaultZoom = 15; // Terrarium tiles work best at zoom 15
+        this.defaultZoom = 12; // Good balance for Mapterhorn tiles
 
-        // Terrain-RGB tile source - using Mapzen/Nextzen Terrarium tiles
-        // Alternative high-quality source with global coverage
-        this.terrainTileUrl = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png';
+        // PRIMARY: Mapterhorn terrain tiles - Modern, reliable, Cloudflare-backed
+        // Global coverage z0-12, regional coverage z13-17
+        // Format: Terrarium RGB encoding in WebP format
+        this.terrainTileUrl = 'https://tiles.mapterhorn.com/{z}/{x}/{y}.webp';
 
-        // Backup: Try Mapbox Terrain-RGB if above fails
-        // this.terrainTileUrl = 'https://api.mapbox.com/v4/mapbox.terrain-rgb/{z}/{x}/{y}.png?access_token=YOUR_TOKEN';
+        // FALLBACK: OpenTopoData API for point elevation queries
+        // Free public API with SRTM 30m global coverage (-60° to 60° latitude)
+        this.openTopoDataUrl = 'https://api.opentopodata.org/v1/srtm30m';
+        this.useApiFallback = true;
 
         this.init();
     }
@@ -446,7 +449,10 @@ class SolarExposureMap {
         const tileData = await this.loadTerrainTile(tile.x, tile.y, zoom);
 
         if (!tileData) {
-            console.error('Failed to load terrain tile');
+            console.warn('Failed to load terrain tile, trying API fallback...');
+            if (this.useApiFallback) {
+                return await this.getElevationFromAPI(lat, lng);
+            }
             return null;
         }
 
@@ -461,7 +467,10 @@ class SolarExposureMap {
         console.log('Pixel coords:', pixelX, pixelY);
 
         if (pixelX < 0 || pixelX >= this.tileSize || pixelY < 0 || pixelY >= this.tileSize) {
-            console.error('Pixel coords out of bounds');
+            console.warn('Pixel coords out of bounds, trying API fallback...');
+            if (this.useApiFallback) {
+                return await this.getElevationFromAPI(lat, lng);
+            }
             return null;
         }
 
@@ -474,14 +483,45 @@ class SolarExposureMap {
 
         // Check if pixel is blank (no data)
         if (r === 0 && g === 0 && b === 0) {
-            console.warn('No elevation data at this pixel - tile may be incomplete');
+            console.warn('No elevation data at this pixel, trying API fallback...');
+            if (this.useApiFallback) {
+                return await this.getElevationFromAPI(lat, lng);
+            }
             return null;
         }
 
         const elevation = this.decodeTerrainRGB(r, g, b);
-        console.log('Decoded elevation:', elevation);
+        console.log('Decoded elevation:', elevation, 'm (from tiles)');
 
         return elevation;
+    }
+
+    async getElevationFromAPI(lat, lng) {
+        // Fallback to OpenTopoData API for point elevation
+        // Rate limit: 1 call/sec, 1000 calls/day on free tier
+        try {
+            const url = `${this.openTopoDataUrl}?locations=${lat},${lng}`;
+            console.log('Fetching elevation from API:', url);
+
+            const response = await fetch(url);
+            if (!response.ok) {
+                console.error('API request failed:', response.status);
+                return null;
+            }
+
+            const data = await response.json();
+
+            if (data.results && data.results.length > 0) {
+                const elevation = data.results[0].elevation;
+                console.log('Decoded elevation:', elevation, 'm (from API)');
+                return elevation;
+            }
+
+            return null;
+        } catch (error) {
+            console.error('Error fetching elevation from API:', error);
+            return null;
+        }
     }
 
     async calculateRealSlopeAspect(lat, lng, zoom) {
@@ -671,14 +711,14 @@ class SolarExposureMap {
 
             if (!terrainData) {
                 console.error('No terrain data available for this location');
-                console.log('Try: 1) Different zoom level (12-14 works best), 2) Different location, 3) Major mountain ranges');
+                console.log('Note: Outside coverage area or network issue. SRTM covers -60° to 60° latitude.');
 
                 document.getElementById('elevation').textContent = 'No elevation data';
-                document.getElementById('aspect').textContent = 'Try zoom 12-14';
-                document.getElementById('slope').textContent = 'or different area';
-                document.getElementById('exposure-value').textContent = 'Tiles may not exist here';
+                document.getElementById('aspect').textContent = 'Outside coverage';
+                document.getElementById('slope').textContent = 'or network error';
+                document.getElementById('exposure-value').textContent = 'SRTM: -60° to 60° lat';
                 document.getElementById('location').textContent =
-                    `${latlng.lat.toFixed(4)}°, ${latlng.lng.toFixed(4)}°\nTry: Rockies, Alps, Cascades`;
+                    `${latlng.lat.toFixed(4)}°, ${latlng.lng.toFixed(4)}°\nTry different location`;
                 document.getElementById('info-popup').classList.add('active');
                 document.getElementById('loading').classList.remove('active');
                 return;

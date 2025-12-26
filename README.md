@@ -76,6 +76,28 @@ An interactive web application that calculates and visualizes real-time sun expo
 - **SunCalc**: Astronomical calculations for sun position
 - **OpenTopoMap**: Terrain base layer
 - **Canvas API**: High-performance exposure layer rendering
+- **Mapterhorn Terrain Tiles**: Modern Terrarium-RGB elevation tiles (z0-12 global, z13-17 regional)
+- **OpenTopoData API**: SRTM 30m elevation fallback for point queries
+
+### Terrain Data Sources
+
+This app uses a **multi-source approach** for reliable global elevation coverage:
+
+**Primary: Mapterhorn Terrain Tiles**
+- Modern, open-source terrain tiles from [Mapterhorn](https://mapterhorn.com/)
+- Terrarium-RGB encoding in WebP format (512x512 tiles)
+- Global coverage at zoom 0-12, regional coverage at zoom 13-17
+- Cloudflare-backed infrastructure for reliability
+- Free and open data
+
+**Fallback: OpenTopoData API**
+- Public API providing SRTM 30m elevation data
+- Global coverage from -60° to 60° latitude
+- Automatically used when tiles are unavailable
+- Rate limit: 1 call/sec, 1000 calls/day
+- Free tier: [OpenTopoData.org](https://www.opentopodata.org/)
+
+This dual-source approach ensures you get elevation data even in areas where tile coverage is incomplete.
 
 ### Calculation Methods
 
@@ -100,9 +122,10 @@ exposure = max(0, slopeNormal · sunDirection)
 This gives a value from 0 (no exposure) to 1 (perpendicular to sun).
 
 #### 4. Shadow Modeling
-- Simplified shadow calculation based on sun altitude
-- In production, would use ray-casting through digital elevation model (DEM)
-- Accounts for terrain occlusion
+- **TRUE 3D ray-casting** through digital elevation model (DEM)
+- Casts rays from clicked point toward sun at 100m intervals up to 5km
+- Compares ray height vs. terrain height to detect occlusion
+- Accurately models terrain shadows from ridges and peaks
 
 ### Performance Optimizations
 - **Spatial Sampling**: Renders at lower resolution based on zoom level
@@ -155,23 +178,26 @@ https://<username>.github.io/Sun_exposure_map_layer/
 
 ## 🔬 Future Enhancements
 
+### Completed ✅
+- [x] **Real DEM Data Integration**: Using Mapterhorn Terrarium tiles + OpenTopoData SRTM API
+- [x] **True Shadow Ray-Casting**: Implemented 3D ray-casting through DEM
+- [x] **Cumulative Exposure**: Shows total sun hours per day for clicked points
+- [x] **Mobile Optimization**: Bottom drawer UI pattern (CalTopo-style)
+
 ### Planned Features
-- [ ] **Real DEM Data Integration**: Replace simulated terrain with actual elevation data (SRTM, USGS)
-- [ ] **True Shadow Ray-Casting**: Implement proper 3D shadow calculations
 - [ ] **Daily Sun Path Visualization**: Show the arc of the sun across the sky
-- [ ] **Cumulative Exposure**: Calculate total sun hours for the day
 - [ ] **Snow Melt Prediction**: Model snow melt rate based on exposure
 - [ ] **Aspect Rose Diagram**: Show distribution of slope aspects in view
 - [ ] **Export & Share**: Generate shareable links with specific locations/times
-- [ ] **Mobile Optimization**: Improve touch controls and performance
 - [ ] **Offline Mode**: Cache tiles for offline use in backcountry
 - [ ] **Weather Integration**: Combine with cloud cover data
+- [ ] **Higher Resolution Tiles**: Use Mapterhorn z13-17 regional tiles for better detail
 
 ### Technical Improvements
 - [ ] Web Workers for terrain calculations
 - [ ] Progressive rendering for large areas
 - [ ] WebGL for 3D terrain visualization
-- [ ] Integration with real terrain APIs (Mapbox Terrain-RGB)
+- [ ] Rate limiting for OpenTopoData API (1 call/sec, 1000/day)
 
 ## 📚 Resources & References
 
