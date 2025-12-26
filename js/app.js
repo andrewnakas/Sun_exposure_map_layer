@@ -420,9 +420,14 @@ class SolarExposureMap {
 
     async getRealElevation(lat, lng, zoom) {
         const tile = this.latLngToTile(lat, lng, zoom);
+        console.log('Tile coords:', tile);
+
         const tileData = await this.loadTerrainTile(tile.x, tile.y, zoom);
 
-        if (!tileData) return null;
+        if (!tileData) {
+            console.error('Failed to load terrain tile');
+            return null;
+        }
 
         // Convert lat/lng to pixel position within tile
         const scale = Math.pow(2, zoom);
@@ -432,7 +437,10 @@ class SolarExposureMap {
         const pixelX = Math.floor((worldX - tile.x) * this.tileSize);
         const pixelY = Math.floor((worldY - tile.y) * this.tileSize);
 
+        console.log('Pixel coords:', pixelX, pixelY);
+
         if (pixelX < 0 || pixelX >= this.tileSize || pixelY < 0 || pixelY >= this.tileSize) {
+            console.error('Pixel coords out of bounds');
             return null;
         }
 
@@ -441,7 +449,12 @@ class SolarExposureMap {
         const g = tileData.data[idx + 1];
         const b = tileData.data[idx + 2];
 
-        return this.decodeTerrainRGB(r, g, b);
+        console.log('RGB values:', r, g, b);
+
+        const elevation = this.decodeTerrainRGB(r, g, b);
+        console.log('Decoded elevation:', elevation);
+
+        return elevation;
     }
 
     async calculateRealSlopeAspect(lat, lng, zoom) {
@@ -624,12 +637,25 @@ class SolarExposureMap {
 
         try {
             const zoom = this.map.getZoom();
+
+            console.log('Clicked:', latlng.lat, latlng.lng, 'Zoom:', zoom);
+
             const terrainData = await this.getTerrainData(latlng.lat, latlng.lng, zoom);
 
             if (!terrainData) {
+                console.error('No terrain data available for this location');
+                document.getElementById('elevation').textContent = 'No data';
+                document.getElementById('aspect').textContent = 'No data';
+                document.getElementById('slope').textContent = 'No data';
+                document.getElementById('exposure-value').textContent = 'No data';
+                document.getElementById('location').textContent =
+                    `${latlng.lat.toFixed(4)}°, ${latlng.lng.toFixed(4)}°`;
+                document.getElementById('info-popup').classList.add('active');
                 document.getElementById('loading').classList.remove('active');
                 return;
             }
+
+            console.log('Terrain data:', terrainData);
 
             // Calculate ACCURATE sun exposure with ray-casting (only for this point)
             const exposure = await this.calculateExposure(
@@ -639,6 +665,8 @@ class SolarExposureMap {
                 latlng.lat,
                 latlng.lng
             );
+
+            console.log('Exposure:', exposure);
 
             // Calculate comprehensive sun data
             const sunData = this.calculateComprehensiveSunData(latlng.lat, latlng.lng, terrainData);
@@ -672,6 +700,7 @@ class SolarExposureMap {
 
         } catch (error) {
             console.error('Error calculating sun data:', error);
+            document.getElementById('elevation').textContent = 'Error: ' + error.message;
         }
 
         document.getElementById('loading').classList.remove('active');
