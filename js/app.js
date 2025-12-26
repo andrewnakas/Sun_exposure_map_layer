@@ -499,9 +499,10 @@ class SolarExposureMap {
         }
 
         // Calculate gradients in meters
+        // In GIS, y-axis increases downward (south), not upward (north)
         const metersPerDegree = 111320 * Math.cos(lat * Math.PI / 180);
         const dzdx = (elevEast - elevWest) / (2 * delta * metersPerDegree);
-        const dzdy = (elevNorth - elevSouth) / (2 * delta * 111320);
+        const dzdy = (elevSouth - elevNorth) / (2 * delta * 111320);
 
         // Calculate slope (in degrees)
         const slopeRad = Math.atan(Math.sqrt(dzdx * dzdx + dzdy * dzdy));
