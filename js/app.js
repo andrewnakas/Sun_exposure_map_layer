@@ -507,11 +507,18 @@ class SolarExposureMap {
         const slopeRad = Math.atan(Math.sqrt(dzdx * dzdx + dzdy * dzdy));
         const slope = slopeRad * 180 / Math.PI;
 
-        // Calculate aspect (in degrees, 0 = North, 90 = East, 180 = South, 270 = West)
-        // Aspect is the direction the slope FACES (downhill direction)
-        // Use -dzdx because aspect points downslope (opposite of gradient ascent)
-        let aspect = Math.atan2(-dzdx, dzdy) * 180 / Math.PI;
+        // Calculate aspect using standard GIS formula (ArcGIS method)
+        // atan2(dz/dy, -dz/dx) gives aspect in MATHEMATICAL coords (0° = East)
+        // Need to convert to GEOGRAPHIC coords (0° = North)
+        let mathAspect = Math.atan2(dzdy, -dzdx) * 180 / Math.PI;
+
+        // Convert from mathematical coords (0=East) to geographic coords (0=North)
+        // Geographic = 90° - Mathematical
+        let aspect = 90 - mathAspect;
+
+        // Normalize to 0-360 range
         if (aspect < 0) aspect += 360;
+        if (aspect >= 360) aspect -= 360;
 
         return { aspect, slope };
     }
@@ -937,10 +944,10 @@ class SolarExposureMap {
         // Calculate EXACT times when sun hits and leaves this specific slope
         // Using 15-minute intervals for precision
         const date = this.currentDate;
-        const sunTimes = SunCalc.getTimes(date, lat, lng);
 
         let slopeStartTime = null;
         let slopeEndTime = null;
+        let lastExposedTime = null;
 
         // Sample throughout the day with 15-minute precision
         const startOfDay = new Date(date);
@@ -978,19 +985,32 @@ class SolarExposureMap {
                 this.sunAltitude = oldAlt;
                 this.sunAzimuth = oldAz;
 
-                if (exposure > 0 && !wasExposed) {
-                    slopeStartTime = new Date(testTime);
-                    wasExposed = true;
-                } else if (exposure === 0 && wasExposed) {
+                if (exposure > 0) {
+                    // Track last time we had exposure
+                    lastExposedTime = new Date(testTime);
+
+                    if (!wasExposed) {
+                        // Sun just appeared on slope
+                        slopeStartTime = new Date(testTime);
+                        wasExposed = true;
+                    }
+                } else if (wasExposed) {
+                    // Sun just left slope
                     slopeEndTime = new Date(testTime);
                     wasExposed = false;
                 }
+            } else if (wasExposed) {
+                // Sun went below horizon while slope was still exposed
+                // Use last time we saw exposure (should never exceed terrain sunset)
+                slopeEndTime = lastExposedTime;
+                wasExposed = false;
             }
         }
 
-        // If still exposed at end of day, use sunset
-        if (wasExposed && !slopeEndTime) {
-            slopeEndTime = sunTimes.sunset;
+        // If still exposed at end of day, use last exposure time
+        // (NOT astronomical sunset - use actual last time we saw sun on slope)
+        if (wasExposed && lastExposedTime) {
+            slopeEndTime = lastExposedTime;
         }
 
         return {
