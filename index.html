@@ -23,8 +23,10 @@
             overflow: hidden;
             -webkit-font-smoothing: antialiased;
             touch-action: none;
+            background: #1a1a1a;
         }
 
+        /* Map container - adjusted for sidebar */
         #map {
             position: absolute;
             top: 0;
@@ -34,146 +36,288 @@
             z-index: 1;
         }
 
-        /* Top overlay - minimal like Backtrack */
-        .top-overlay {
+        /* Solar data sidebar - Desktop: right side, Mobile: bottom */
+        .solar-sidebar {
             position: absolute;
-            top: 10px;
-            left: 10px;
-            right: 10px;
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            z-index: 1000;
-            pointer-events: none;
-        }
-
-        .top-overlay > * {
-            pointer-events: all;
-        }
-
-        /* Compact sun badge */
-        .sun-badge {
-            background: rgba(0, 0, 0, 0.75);
-            backdrop-filter: blur(10px);
-            color: #ffa500;
-            padding: 6px 12px;
-            border-radius: 16px;
-            font-size: 12px;
-            font-weight: 600;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-        }
-
-        /* Info button - expands to show details */
-        .info-btn {
-            width: 36px;
-            height: 36px;
-            background: rgba(0, 0, 0, 0.75);
-            backdrop-filter: blur(10px);
-            border-radius: 18px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-size: 18px;
-            cursor: pointer;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-            transition: all 0.2s;
-        }
-
-        .info-btn:active {
-            transform: scale(0.95);
-        }
-
-        /* Info popup - shows on tap */
-        .info-popup {
-            position: absolute;
-            top: 50px;
-            right: 10px;
-            background: rgba(0, 0, 0, 0.9);
-            backdrop-filter: blur(10px);
-            color: white;
-            padding: 12px;
-            border-radius: 12px;
-            font-size: 11px;
-            max-width: 200px;
-            box-shadow: 0 4px 16px rgba(0,0,0,0.3);
-            display: none;
-            z-index: 1001;
-        }
-
-        .info-popup.active {
-            display: block;
-        }
-
-        .info-popup .stat {
-            margin: 6px 0;
-            display: flex;
-            justify-content: space-between;
-            gap: 8px;
-        }
-
-        .info-popup .label {
-            color: #999;
-            font-weight: 500;
-        }
-
-        .info-popup .value {
-            color: #fff;
-            font-weight: 600;
-        }
-
-        /* Bottom drawer - CalTopo style */
-        .drawer {
-            position: absolute;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            background: rgba(255, 255, 255, 0.98);
+            background: rgba(20, 20, 20, 0.95);
             backdrop-filter: blur(20px);
-            border-radius: 16px 16px 0 0;
-            box-shadow: 0 -4px 24px rgba(0,0,0,0.15);
+            color: white;
             z-index: 1000;
+            overflow-y: auto;
+            box-shadow: -4px 0 24px rgba(0,0,0,0.3);
             transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            max-height: 65vh;
         }
 
-        .drawer.minimized {
-            transform: translateY(calc(100% - 56px));
+        /* Mobile layout - bottom panel */
+        @media (max-width: 767px) {
+            #map {
+                bottom: 45vh;
+            }
+
+            .solar-sidebar {
+                bottom: 0;
+                left: 0;
+                right: 0;
+                height: 45vh;
+                border-radius: 16px 16px 0 0;
+            }
+
+            .solar-sidebar.collapsed {
+                transform: translateY(calc(100% - 50px));
+            }
         }
 
-        .drawer-handle {
-            height: 56px;
+        /* Desktop layout - right sidebar */
+        @media (min-width: 768px) {
+            #map {
+                right: 380px;
+            }
+
+            .solar-sidebar {
+                top: 0;
+                right: 0;
+                width: 380px;
+                height: 100vh;
+                border-radius: 0;
+            }
+
+            .solar-sidebar.collapsed {
+                transform: translateX(100%);
+            }
+        }
+
+        /* Sidebar header */
+        .sidebar-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
             display: flex;
-            flex-direction: column;
+            justify-content: space-between;
             align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            user-select: none;
-            gap: 4px;
         }
 
-        .drawer-bar {
-            width: 36px;
-            height: 4px;
-            background: #d0d0d0;
-            border-radius: 2px;
-        }
-
-        .drawer-time {
-            font-size: 16px;
+        .sidebar-title {
+            font-size: 18px;
             font-weight: 700;
             color: #ff6b00;
         }
 
-        .drawer-content {
-            padding: 0 20px 20px 20px;
-            overflow-y: auto;
-            max-height: calc(65vh - 56px);
+        .collapse-btn {
+            width: 32px;
+            height: 32px;
+            background: rgba(255,255,255,0.1);
+            border: none;
+            border-radius: 8px;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
         }
 
-        /* Time slider - main control */
+        .collapse-btn:hover {
+            background: rgba(255,255,255,0.2);
+        }
+
+        /* Sidebar content sections */
+        .sidebar-content {
+            padding: 20px;
+        }
+
+        .section {
+            margin-bottom: 24px;
+        }
+
+        .section-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #999;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 12px;
+        }
+
+        /* Location info */
+        .location-card {
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+
+        .location-title {
+            font-size: 13px;
+            color: #999;
+            margin-bottom: 4px;
+        }
+
+        .location-coords {
+            font-size: 16px;
+            font-weight: 600;
+            font-family: 'Monaco', 'Courier New', monospace;
+        }
+
+        /* Stats grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .stat-card {
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 12px;
+        }
+
+        .stat-label {
+            font-size: 11px;
+            color: #999;
+            margin-bottom: 4px;
+        }
+
+        .stat-value {
+            font-size: 20px;
+            font-weight: 700;
+            color: #fff;
+        }
+
+        .stat-unit {
+            font-size: 14px;
+            color: #999;
+            margin-left: 2px;
+        }
+
+        /* Sun timeline */
+        .sun-timeline {
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+
+        .timeline-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+
+        .timeline-item {
+            font-size: 13px;
+        }
+
+        .timeline-label {
+            color: #999;
+            font-size: 11px;
+        }
+
+        .timeline-value {
+            color: #fff;
+            font-weight: 600;
+            font-size: 15px;
+        }
+
+        /* Sun path visualization */
+        .sun-path {
+            height: 120px;
+            background: linear-gradient(to bottom, rgba(255,107,0,0.1) 0%, rgba(255,107,0,0) 100%);
+            border-radius: 8px;
+            position: relative;
+            margin-top: 12px;
+            overflow: hidden;
+        }
+
+        .sun-path-line {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: rgba(255,107,0,0.3);
+        }
+
+        .sun-position {
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            background: #ff6b00;
+            border-radius: 50%;
+            box-shadow: 0 0 12px rgba(255,107,0,0.6);
+        }
+
+        /* Exposure chart */
+        .exposure-chart {
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+
+        .chart-bars {
+            display: flex;
+            gap: 2px;
+            height: 80px;
+            align-items: flex-end;
+            margin-top: 12px;
+        }
+
+        .chart-bar {
+            flex: 1;
+            background: #333;
+            border-radius: 2px 2px 0 0;
+            position: relative;
+            transition: all 0.2s;
+        }
+
+        .chart-bar.exposed {
+            background: linear-gradient(to top, #ff6b00, #ffa500);
+        }
+
+        .chart-bar.shadow {
+            background: linear-gradient(to top, #1a1a1a, #333);
+        }
+
+        .chart-bar.current {
+            box-shadow: 0 0 8px rgba(255,107,0,0.8);
+        }
+
+        .chart-labels {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 8px;
+            font-size: 10px;
+            color: #666;
+        }
+
+        /* Controls drawer - minimal on desktop */
+        .controls-drawer {
+            position: absolute;
+            background: rgba(255, 255, 255, 0.98);
+            backdrop-filter: blur(20px);
+            border-radius: 16px;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.15);
+            z-index: 1000;
+            padding: 20px;
+        }
+
+        @media (max-width: 767px) {
+            .controls-drawer {
+                display: none; /* Hide on mobile, controls in sidebar */
+            }
+        }
+
+        @media (min-width: 768px) {
+            .controls-drawer {
+                bottom: 20px;
+                left: 20px;
+                width: 320px;
+            }
+        }
+
+        /* Time slider */
         .time-control {
-            margin-bottom: 20px;
+            margin-bottom: 16px;
         }
 
         .time-control label {
@@ -182,6 +326,14 @@
             font-weight: 600;
             color: #666;
             margin-bottom: 8px;
+        }
+
+        .time-display {
+            font-size: 24px;
+            font-weight: 700;
+            color: #ff6b00;
+            text-align: center;
+            margin-bottom: 12px;
         }
 
         .time-control input[type="range"] {
@@ -207,7 +359,7 @@
             border-radius: 12px;
             background: #ff6b00;
             cursor: pointer;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            box-shadow: 0 2px 8px rgba(255,107,0,0.4);
         }
 
         .time-control input[type="range"]::-moz-range-track {
@@ -224,12 +376,12 @@
             background: #ff6b00;
             cursor: pointer;
             border: none;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            box-shadow: 0 2px 8px rgba(255,107,0,0.4);
         }
 
         /* Date input */
         .date-control {
-            margin-bottom: 20px;
+            margin-bottom: 16px;
         }
 
         .date-control label {
@@ -249,11 +401,11 @@
             background: white;
         }
 
-        /* Toggle switches - compact */
+        /* Toggle switches */
         .toggles {
             display: flex;
             gap: 12px;
-            margin-bottom: 20px;
+            margin-bottom: 16px;
         }
 
         .toggle {
@@ -308,14 +460,13 @@
         }
 
         .btn {
-            padding: 14px;
+            padding: 12px;
             border: none;
             border-radius: 8px;
             font-size: 14px;
             font-weight: 600;
             cursor: pointer;
             transition: all 0.2s;
-            touch-action: manipulation;
         }
 
         .btn-primary {
@@ -323,9 +474,8 @@
             color: white;
         }
 
-        .btn-primary:active {
+        .btn-primary:hover {
             background: #e66000;
-            transform: scale(0.98);
         }
 
         .btn-secondary {
@@ -333,43 +483,32 @@
             color: #333;
         }
 
-        .btn-secondary:active {
+        .btn-secondary:hover {
             background: #e0e0e0;
-            transform: scale(0.98);
         }
 
-        /* Compact legend - bottom left */
-        .legend {
+        /* Top overlay - sun badge */
+        .top-overlay {
             position: absolute;
-            bottom: 70px;
+            top: 10px;
             left: 10px;
+            z-index: 1000;
+            pointer-events: none;
+        }
+
+        .top-overlay > * {
+            pointer-events: all;
+        }
+
+        .sun-badge {
             background: rgba(0, 0, 0, 0.75);
             backdrop-filter: blur(10px);
-            padding: 8px 10px;
-            border-radius: 12px;
-            font-size: 10px;
-            color: white;
-            z-index: 999;
+            color: #ffa500;
+            padding: 8px 14px;
+            border-radius: 16px;
+            font-size: 13px;
+            font-weight: 600;
             box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-        }
-
-        .legend-title {
-            font-weight: 700;
-            margin-bottom: 6px;
-            font-size: 11px;
-        }
-
-        .legend-item {
-            display: flex;
-            align-items: center;
-            margin: 3px 0;
-        }
-
-        .legend-color {
-            width: 16px;
-            height: 12px;
-            margin-right: 6px;
-            border-radius: 2px;
         }
 
         /* Loading indicator */
@@ -378,12 +517,12 @@
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
-            background: rgba(0, 0, 0, 0.8);
+            background: rgba(0, 0, 0, 0.9);
             backdrop-filter: blur(10px);
             color: white;
-            padding: 16px 24px;
+            padding: 20px 28px;
             border-radius: 12px;
-            font-size: 13px;
+            font-size: 14px;
             font-weight: 600;
             z-index: 2000;
             display: none;
@@ -396,9 +535,9 @@
         }
 
         .spinner {
-            width: 20px;
-            height: 20px;
-            border: 3px solid #555;
+            width: 24px;
+            height: 24px;
+            border: 3px solid #333;
             border-top-color: #ff6b00;
             border-radius: 50%;
             animation: spin 0.8s linear infinite;
@@ -408,123 +547,237 @@
             to { transform: rotate(360deg); }
         }
 
-        /* Desktop adjustments */
-        @media (min-width: 768px) {
-            .drawer {
-                max-width: 400px;
-                left: auto;
-                right: 20px;
-                bottom: 20px;
-                border-radius: 16px;
-            }
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: #666;
+        }
 
-            .drawer.minimized {
-                transform: translateY(calc(100% - 56px));
-            }
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 12px;
+            opacity: 0.5;
+        }
 
-            .legend {
-                bottom: 20px;
-            }
+        .empty-state-text {
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        /* Scroll styling */
+        .solar-sidebar::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .solar-sidebar::-webkit-scrollbar-track {
+            background: rgba(255,255,255,0.05);
+        }
+
+        .solar-sidebar::-webkit-scrollbar-thumb {
+            background: rgba(255,255,255,0.2);
+            border-radius: 4px;
+        }
+
+        .solar-sidebar::-webkit-scrollbar-thumb:hover {
+            background: rgba(255,255,255,0.3);
         }
     </style>
 </head>
 <body>
     <div id="map"></div>
 
-    <!-- Top overlay -->
+    <!-- Top overlay - sun badge -->
     <div class="top-overlay">
         <div class="sun-badge" id="sun-badge">☀ Loading...</div>
-        <div class="info-btn" id="info-btn">ⓘ</div>
     </div>
 
-    <!-- Info popup -->
-    <div class="info-popup" id="info-popup">
-        <div class="stat">
-            <span class="label">Location</span>
-            <span class="value" id="location">--</span>
+    <!-- Solar data sidebar -->
+    <div class="solar-sidebar" id="solar-sidebar">
+        <div class="sidebar-header">
+            <div class="sidebar-title">☀ Solar Analysis</div>
+            <button class="collapse-btn" id="collapse-btn">→</button>
         </div>
-        <div class="stat">
-            <span class="label">Elevation</span>
-            <span class="value" id="elevation">--</span>
-        </div>
-        <div class="stat">
-            <span class="label">Aspect</span>
-            <span class="value" id="aspect">--</span>
-        </div>
-        <div class="stat">
-            <span class="label">Slope</span>
-            <span class="value" id="slope">--</span>
-        </div>
-        <div class="stat">
-            <span class="label">Exposure</span>
-            <span class="value" id="exposure-value">--</span>
-        </div>
-    </div>
 
-    <!-- Bottom drawer -->
-    <div class="drawer minimized" id="drawer">
-        <div class="drawer-handle" id="drawer-handle">
-            <div class="drawer-bar"></div>
-            <div class="drawer-time" id="drawer-time">12:00</div>
-        </div>
-        <div class="drawer-content">
-            <div class="time-control">
-                <label>Time of Day</label>
-                <input type="range" id="time-slider" min="0" max="1440" step="15" value="720">
+        <div class="sidebar-content">
+            <!-- Empty state -->
+            <div class="empty-state" id="empty-state">
+                <div class="empty-state-icon">📍</div>
+                <div class="empty-state-text">Click anywhere on the map to analyze sun exposure for that location</div>
             </div>
 
-            <div class="date-control">
-                <label>Date</label>
-                <input type="date" id="date-input">
-            </div>
-
-            <div class="toggles">
-                <div class="toggle">
-                    <span>Shadows</span>
-                    <input type="checkbox" id="shadow-toggle" checked>
+            <!-- Solar data (hidden until clicked) -->
+            <div id="solar-data" style="display: none;">
+                <!-- Location -->
+                <div class="section">
+                    <div class="section-title">Location</div>
+                    <div class="location-card">
+                        <div class="location-title">Coordinates</div>
+                        <div class="location-coords" id="location-coords">--</div>
+                    </div>
                 </div>
-                <div class="toggle">
-                    <span>Aspect</span>
-                    <input type="checkbox" id="aspect-toggle" checked>
-                </div>
-            </div>
 
-            <div class="actions">
-                <button class="btn btn-primary" id="now-button">Now</button>
-                <button class="btn btn-secondary" id="animate-button">Animate</button>
+                <!-- Terrain stats -->
+                <div class="section">
+                    <div class="section-title">Terrain</div>
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-label">Elevation</div>
+                            <div>
+                                <span class="stat-value" id="elevation-value">--</span>
+                                <span class="stat-unit">m</span>
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Slope</div>
+                            <div>
+                                <span class="stat-value" id="slope-value">--</span>
+                                <span class="stat-unit">°</span>
+                            </div>
+                        </div>
+                        <div class="stat-card" style="grid-column: 1 / -1;">
+                            <div class="stat-label">Aspect</div>
+                            <div>
+                                <span class="stat-value" id="aspect-value">--</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Sun timeline -->
+                <div class="section">
+                    <div class="section-title">Sun Times (Terrain-Aware)</div>
+                    <div class="sun-timeline">
+                        <div class="timeline-header">
+                            <div class="timeline-item">
+                                <div class="timeline-label">Sunrise</div>
+                                <div class="timeline-value" id="sunrise-time">--</div>
+                            </div>
+                            <div class="timeline-item">
+                                <div class="timeline-label">Sunset</div>
+                                <div class="timeline-value" id="sunset-time">--</div>
+                            </div>
+                        </div>
+                        <div class="timeline-header">
+                            <div class="timeline-item">
+                                <div class="timeline-label">Sun on Slope</div>
+                                <div class="timeline-value" id="slope-sun-start">--</div>
+                            </div>
+                            <div class="timeline-item">
+                                <div class="timeline-label">Sun off Slope</div>
+                                <div class="timeline-value" id="slope-sun-end">--</div>
+                            </div>
+                        </div>
+                        <div class="sun-path" id="sun-path">
+                            <!-- Dynamic sun position indicator -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Current exposure -->
+                <div class="section">
+                    <div class="section-title">Current Sun Exposure</div>
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-label">Exposure</div>
+                            <div>
+                                <span class="stat-value" id="current-exposure">--</span>
+                                <span class="stat-unit">%</span>
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Status</div>
+                            <div>
+                                <span class="stat-value" id="sun-status" style="font-size: 16px;">--</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Hourly exposure chart -->
+                <div class="section">
+                    <div class="section-title">Hourly Sun Exposure</div>
+                    <div class="exposure-chart">
+                        <div style="font-size: 13px; color: #999; margin-bottom: 8px;">
+                            Total sun hours today: <span id="total-sun-hours" style="color: #fff; font-weight: 600;">--</span>
+                        </div>
+                        <div class="chart-bars" id="exposure-bars">
+                            <!-- Dynamic hourly bars -->
+                        </div>
+                        <div class="chart-labels">
+                            <span>00:00</span>
+                            <span>06:00</span>
+                            <span>12:00</span>
+                            <span>18:00</span>
+                            <span>24:00</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Controls (mobile only) -->
+                <div class="section" style="display: none;" id="mobile-controls">
+                    <div class="section-title">Time Controls</div>
+                    <div class="time-control">
+                        <div class="time-display" id="time-display-mobile">12:00</div>
+                        <input type="range" id="time-slider-mobile" min="0" max="1440" step="15" value="720">
+                    </div>
+                    <div class="date-control">
+                        <label>Date</label>
+                        <input type="date" id="date-input-mobile">
+                    </div>
+                    <div class="toggles">
+                        <div class="toggle">
+                            <span>Shadows</span>
+                            <input type="checkbox" id="shadow-toggle-mobile" checked>
+                        </div>
+                        <div class="toggle">
+                            <span>Aspect</span>
+                            <input type="checkbox" id="aspect-toggle-mobile" checked>
+                        </div>
+                    </div>
+                    <div class="actions">
+                        <button class="btn btn-primary" id="now-button-mobile">Now</button>
+                        <button class="btn btn-secondary" id="animate-button-mobile">Animate</button>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
 
-    <!-- Legend -->
-    <div class="legend">
-        <div class="legend-title">Sun Exposure</div>
-        <div class="legend-item">
-            <div class="legend-color" style="background: #001a4d;"></div>
-            <span>Shadow</span>
+    <!-- Controls drawer (desktop only) -->
+    <div class="controls-drawer" id="controls-drawer">
+        <div class="time-control">
+            <label>Time of Day</label>
+            <div class="time-display" id="time-display">12:00</div>
+            <input type="range" id="time-slider" min="0" max="1440" step="15" value="720">
         </div>
-        <div class="legend-item">
-            <div class="legend-color" style="background: #4d4dff;"></div>
-            <span>North</span>
+
+        <div class="date-control">
+            <label>Date</label>
+            <input type="date" id="date-input">
         </div>
-        <div class="legend-item">
-            <div class="legend-color" style="background: #ffff00;"></div>
-            <span>East</span>
+
+        <div class="toggles">
+            <div class="toggle">
+                <span>Shadows</span>
+                <input type="checkbox" id="shadow-toggle" checked>
+            </div>
+            <div class="toggle">
+                <span>Aspect</span>
+                <input type="checkbox" id="aspect-toggle" checked>
+            </div>
         </div>
-        <div class="legend-item">
-            <div class="legend-color" style="background: #ff8000;"></div>
-            <span>West</span>
-        </div>
-        <div class="legend-item">
-            <div class="legend-color" style="background: #ff0000;"></div>
-            <span>South</span>
+
+        <div class="actions">
+            <button class="btn btn-primary" id="now-button">Now</button>
+            <button class="btn btn-secondary" id="animate-button">Animate</button>
         </div>
     </div>
 
     <!-- Loading indicator -->
     <div class="loading" id="loading">
         <div class="spinner"></div>
-        <span>Loading terrain...</span>
+        <span>Calculating sun exposure...</span>
     </div>
 
     <!-- Leaflet JS -->
@@ -535,5 +788,17 @@
 
     <!-- Main App -->
     <script src="js/app.js"></script>
+
+    <script>
+        // Show mobile controls on small screens
+        if (window.innerWidth < 768) {
+            document.getElementById('mobile-controls').style.display = 'block';
+        }
+
+        // Collapse button
+        document.getElementById('collapse-btn').addEventListener('click', () => {
+            document.getElementById('solar-sidebar').classList.toggle('collapsed');
+        });
+    </script>
 </body>
 </html>
