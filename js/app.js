@@ -16,9 +16,9 @@ class SolarExposureMap {
         this.showAspect = true;
         this.clickMarker = null; // Marker for clicked location
 
-        // Default location (Rocky Mountains - great for skiing!)
-        this.defaultCenter = [39.7392, -104.9903]; // Denver area
-        this.defaultZoom = 12; // Good balance for Mapterhorn tiles
+        // Default location - Bridger Bowl, Montana (great skiing and terrain analysis!)
+        this.defaultCenter = [45.8165, -110.9045]; // Bridger Bowl
+        this.defaultZoom = 13; // Good detail for terrain analysis
 
         // Mapterhorn terrain tiles - Modern, reliable, Cloudflare-backed
         // Global coverage at z0-12 (z13-17 regional only, incomplete)
@@ -508,7 +508,9 @@ class SolarExposureMap {
         const slope = slopeRad * 180 / Math.PI;
 
         // Calculate aspect (in degrees, 0 = North, 90 = East, 180 = South, 270 = West)
-        let aspect = Math.atan2(dzdx, dzdy) * 180 / Math.PI;
+        // Aspect is the direction the slope FACES (downhill direction)
+        // Use -dzdx because aspect points downslope (opposite of gradient ascent)
+        let aspect = Math.atan2(-dzdx, dzdy) * 180 / Math.PI;
         if (aspect < 0) aspect += 360;
 
         return { aspect, slope };
