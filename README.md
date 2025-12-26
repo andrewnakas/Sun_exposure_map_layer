@@ -76,28 +76,23 @@ An interactive web application that calculates and visualizes real-time sun expo
 - **SunCalc**: Astronomical calculations for sun position
 - **OpenTopoMap**: Terrain base layer
 - **Canvas API**: High-performance exposure layer rendering
-- **Mapterhorn Terrain Tiles**: Modern Terrarium-RGB elevation tiles (z0-12 global, z13-17 regional)
-- **OpenTopoData API**: SRTM 30m elevation fallback for point queries
+- **Mapterhorn Terrain Tiles**: Global Terrarium-RGB elevation tiles
 
-### Terrain Data Sources
+### Terrain Data Source
 
-This app uses a **multi-source approach** for reliable global elevation coverage:
+This app uses **Mapterhorn terrain tiles** for global elevation coverage:
 
-**Primary: Mapterhorn Terrain Tiles**
+**Mapterhorn Terrain Tiles**
 - Modern, open-source terrain tiles from [Mapterhorn](https://mapterhorn.com/)
 - Terrarium-RGB encoding in WebP format (512x512 tiles)
-- Global coverage at zoom 0-12, regional coverage at zoom 13-17
-- Cloudflare-backed infrastructure for reliability
+- **Global coverage**: 85°N to 85°S latitude at zoom 0-12
+- Cloudflare-backed infrastructure (R2 + Workers)
 - Free and open data
 
-**Fallback: OpenTopoData API**
-- Public API providing SRTM 30m elevation data
-- Global coverage from -60° to 60° latitude
-- Automatically used when tiles are unavailable
-- Rate limit: 1 call/sec, 1000 calls/day
-- Free tier: [OpenTopoData.org](https://www.opentopodata.org/)
-
-This dual-source approach ensures you get elevation data even in areas where tile coverage is incomplete.
+**How it works:**
+- Terrain queries are automatically capped at zoom level 12 for global coverage
+- Works at any map zoom level - the app intelligently queries z12 tiles for elevation data
+- Covers entire planet except polar regions (>85° N/S)
 
 ### Calculation Methods
 
@@ -179,10 +174,11 @@ https://<username>.github.io/Sun_exposure_map_layer/
 ## 🔬 Future Enhancements
 
 ### Completed ✅
-- [x] **Real DEM Data Integration**: Using Mapterhorn Terrarium tiles + OpenTopoData SRTM API
+- [x] **Real DEM Data Integration**: Using Mapterhorn Terrarium tiles globally
 - [x] **True Shadow Ray-Casting**: Implemented 3D ray-casting through DEM
 - [x] **Cumulative Exposure**: Shows total sun hours per day for clicked points
 - [x] **Mobile Optimization**: Bottom drawer UI pattern (CalTopo-style)
+- [x] **Global Coverage**: Works anywhere on Earth (85°N to 85°S)
 
 ### Planned Features
 - [ ] **Daily Sun Path Visualization**: Show the arc of the sun across the sky
@@ -191,13 +187,12 @@ https://<username>.github.io/Sun_exposure_map_layer/
 - [ ] **Export & Share**: Generate shareable links with specific locations/times
 - [ ] **Offline Mode**: Cache tiles for offline use in backcountry
 - [ ] **Weather Integration**: Combine with cloud cover data
-- [ ] **Higher Resolution Tiles**: Use Mapterhorn z13-17 regional tiles for better detail
 
 ### Technical Improvements
 - [ ] Web Workers for terrain calculations
 - [ ] Progressive rendering for large areas
 - [ ] WebGL for 3D terrain visualization
-- [ ] Rate limiting for OpenTopoData API (1 call/sec, 1000/day)
+- [ ] Higher resolution regional tiles (Mapterhorn z13-17) for select areas
 
 ## 📚 Resources & References
 

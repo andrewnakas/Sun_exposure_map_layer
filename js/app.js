@@ -19,15 +19,11 @@ class SolarExposureMap {
         this.defaultCenter = [39.7392, -104.9903]; // Denver area
         this.defaultZoom = 12; // Good balance for Mapterhorn tiles
 
-        // PRIMARY: Mapterhorn terrain tiles - Modern, reliable, Cloudflare-backed
-        // Global coverage z0-12, regional coverage z13-17
-        // Format: Terrarium RGB encoding in WebP format
+        // Mapterhorn terrain tiles - Modern, reliable, Cloudflare-backed
+        // Global coverage at z0-12 (z13-17 regional only, incomplete)
+        // Format: Terrarium RGB encoding in WebP format (512x512)
+        // Terrain queries automatically capped at z12 for global coverage
         this.terrainTileUrl = 'https://tiles.mapterhorn.com/{z}/{x}/{y}.webp';
-
-        // FALLBACK: OpenTopoData API for point elevation queries
-        // Free public API with SRTM 30m global coverage (-60° to 60° latitude)
-        this.openTopoDataUrl = 'https://api.opentopodata.org/v1/srtm30m';
-        this.useApiFallback = true;
 
         this.init();
     }
@@ -342,15 +338,18 @@ class SolarExposureMap {
             return this.terrainCache.get(key);
         }
 
+        // Cap zoom at 12 for global Mapterhorn coverage (z0-12 is global, z13-17 is regional only)
+        const terrainZoom = Math.min(zoom, 12);
+
         // Get real elevation from terrain tiles
-        const elevation = await this.getRealElevation(lat, lng, zoom);
+        const elevation = await this.getRealElevation(lat, lng, terrainZoom);
 
         if (elevation === null) {
             return null;
         }
 
         // Calculate slope and aspect from real terrain
-        const { aspect, slope } = await this.calculateRealSlopeAspect(lat, lng, zoom);
+        const { aspect, slope } = await this.calculateRealSlopeAspect(lat, lng, terrainZoom);
 
         const data = { elevation, aspect, slope };
         this.terrainCache.set(key, data);
@@ -449,10 +448,7 @@ class SolarExposureMap {
         const tileData = await this.loadTerrainTile(tile.x, tile.y, zoom);
 
         if (!tileData) {
-            console.warn('Failed to load terrain tile, trying API fallback...');
-            if (this.useApiFallback) {
-                return await this.getElevationFromAPI(lat, lng);
-            }
+            console.warn('Failed to load terrain tile at zoom', zoom);
             return null;
         }
 
@@ -467,10 +463,7 @@ class SolarExposureMap {
         console.log('Pixel coords:', pixelX, pixelY);
 
         if (pixelX < 0 || pixelX >= this.tileSize || pixelY < 0 || pixelY >= this.tileSize) {
-            console.warn('Pixel coords out of bounds, trying API fallback...');
-            if (this.useApiFallback) {
-                return await this.getElevationFromAPI(lat, lng);
-            }
+            console.warn('Pixel coords out of bounds');
             return null;
         }
 
@@ -483,45 +476,14 @@ class SolarExposureMap {
 
         // Check if pixel is blank (no data)
         if (r === 0 && g === 0 && b === 0) {
-            console.warn('No elevation data at this pixel, trying API fallback...');
-            if (this.useApiFallback) {
-                return await this.getElevationFromAPI(lat, lng);
-            }
+            console.warn('No elevation data at this pixel - tile may be empty');
             return null;
         }
 
         const elevation = this.decodeTerrainRGB(r, g, b);
-        console.log('Decoded elevation:', elevation, 'm (from tiles)');
+        console.log('Decoded elevation:', elevation, 'm');
 
         return elevation;
-    }
-
-    async getElevationFromAPI(lat, lng) {
-        // Fallback to OpenTopoData API for point elevation
-        // Rate limit: 1 call/sec, 1000 calls/day on free tier
-        try {
-            const url = `${this.openTopoDataUrl}?locations=${lat},${lng}`;
-            console.log('Fetching elevation from API:', url);
-
-            const response = await fetch(url);
-            if (!response.ok) {
-                console.error('API request failed:', response.status);
-                return null;
-            }
-
-            const data = await response.json();
-
-            if (data.results && data.results.length > 0) {
-                const elevation = data.results[0].elevation;
-                console.log('Decoded elevation:', elevation, 'm (from API)');
-                return elevation;
-            }
-
-            return null;
-        } catch (error) {
-            console.error('Error fetching elevation from API:', error);
-            return null;
-        }
     }
 
     async calculateRealSlopeAspect(lat, lng, zoom) {
@@ -711,14 +673,14 @@ class SolarExposureMap {
 
             if (!terrainData) {
                 console.error('No terrain data available for this location');
-                console.log('Note: Outside coverage area or network issue. SRTM covers -60° to 60° latitude.');
+                console.log('Note: Network issue or polar regions. Mapterhorn covers 85°N to 85°S globally.');
 
                 document.getElementById('elevation').textContent = 'No elevation data';
-                document.getElementById('aspect').textContent = 'Outside coverage';
-                document.getElementById('slope').textContent = 'or network error';
-                document.getElementById('exposure-value').textContent = 'SRTM: -60° to 60° lat';
+                document.getElementById('aspect').textContent = 'Network error or';
+                document.getElementById('slope').textContent = 'polar regions';
+                document.getElementById('exposure-value').textContent = 'Coverage: 85°N to 85°S';
                 document.getElementById('location').textContent =
-                    `${latlng.lat.toFixed(4)}°, ${latlng.lng.toFixed(4)}°\nTry different location`;
+                    `${latlng.lat.toFixed(4)}°, ${latlng.lng.toFixed(4)}°\nRefresh or try again`;
                 document.getElementById('info-popup').classList.add('active');
                 document.getElementById('loading').classList.remove('active');
                 return;
