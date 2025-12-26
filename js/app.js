@@ -714,8 +714,11 @@ class SolarExposureMap {
             // Update terrain stats
             document.getElementById('elevation-value').textContent = Math.round(terrainData.elevation);
             document.getElementById('slope-value').textContent = terrainData.slope.toFixed(1);
+
+            // Get slope facing direction (relative to sun position)
+            const slopeFacing = this.getSlopeFacing(terrainData.aspect);
             document.getElementById('aspect-value').textContent =
-                `${this.getAspectDirection(terrainData.aspect)} (${terrainData.aspect.toFixed(0)}°)`;
+                `${this.getAspectDirection(terrainData.aspect)} (${terrainData.aspect.toFixed(0)}°) - ${slopeFacing} facing`;
 
             // Calculate current exposure
             const exposure = await this.calculateExposure(
@@ -885,22 +888,24 @@ class SolarExposureMap {
     }
 
     async calculateSlopeSunTimes(lat, lng, terrainData) {
-        // Calculate when sun actually hits and leaves this specific slope
+        // Calculate EXACT times when sun hits and leaves this specific slope
+        // Using 15-minute intervals for precision
         const date = this.currentDate;
         const sunTimes = SunCalc.getTimes(date, lat, lng);
 
         let slopeStartTime = null;
         let slopeEndTime = null;
 
-        // Sample throughout the day to find when slope gets sun
+        // Sample throughout the day with 15-minute precision
         const startOfDay = new Date(date);
         startOfDay.setHours(0, 0, 0, 0);
 
         let wasExposed = false;
 
-        for (let hour = 0; hour < 24; hour++) {
+        // Check every 15 minutes throughout the day
+        for (let minutes = 0; minutes < 1440; minutes += 15) {
             const testTime = new Date(startOfDay);
-            testTime.setHours(hour);
+            testTime.setMinutes(minutes);
 
             const sunPos = SunCalc.getPosition(testTime, lat, lng);
             const altitude = sunPos.altitude * 180 / Math.PI;
@@ -928,10 +933,10 @@ class SolarExposureMap {
                 this.sunAzimuth = oldAz;
 
                 if (exposure > 0 && !wasExposed) {
-                    slopeStartTime = testTime;
+                    slopeStartTime = new Date(testTime);
                     wasExposed = true;
                 } else if (exposure === 0 && wasExposed) {
-                    slopeEndTime = testTime;
+                    slopeEndTime = new Date(testTime);
                     wasExposed = false;
                 }
             }
@@ -1008,6 +1013,24 @@ class SolarExposureMap {
         const directions = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
         const index = Math.round(aspect / 45) % 8;
         return directions[index];
+    }
+
+    getSlopeFacing(aspect) {
+        // Determine slope facing relative to sun position
+        // North-facing (315-45°): Gets less sun, colder
+        // South-facing (135-225°): Gets more sun, warmer
+        // East-facing (45-135°): Morning sun
+        // West-facing (225-315°): Afternoon sun
+
+        if (aspect >= 315 || aspect < 45) {
+            return '❄️ North'; // Cold, shaded
+        } else if (aspect >= 45 && aspect < 135) {
+            return '🌅 East'; // Morning sun
+        } else if (aspect >= 135 && aspect < 225) {
+            return '☀️ South'; // Maximum sun
+        } else {
+            return '🌇 West'; // Afternoon sun
+        }
     }
 
     toggleAnimation() {
