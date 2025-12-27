@@ -799,6 +799,9 @@ class SolarExposureMap {
             );
             console.log('Horizon profile complete');
 
+            // Get astronomical sun times (textbook horizon crossing)
+            const astronomicalSunTimes = SunCalc.getTimes(this.currentDate, latlng.lat, latlng.lng);
+
             // Calculate terrain-aware sun times using horizon profile
             console.log('Calculating terrain-aware sun times...');
             const terrainSunTimes = await this.calculateTerrainAwareSunTimes(
@@ -813,6 +816,12 @@ class SolarExposureMap {
 
             // Update sun timeline
             const formatTime = (date) => date ? date.toTimeString().slice(0, 5) : '--:--';
+
+            // Astronomical times (textbook)
+            document.getElementById('astronomical-sunrise').textContent = formatTime(astronomicalSunTimes.sunrise);
+            document.getElementById('astronomical-sunset').textContent = formatTime(astronomicalSunTimes.sunset);
+
+            // Terrain-aware times
             document.getElementById('sunrise-time').textContent = formatTime(terrainSunTimes.sunrise);
             document.getElementById('sunset-time').textContent = formatTime(terrainSunTimes.sunset);
             document.getElementById('slope-sun-start').textContent = formatTime(slopeTimes.slopeStart);
