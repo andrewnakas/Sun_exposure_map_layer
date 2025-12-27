@@ -563,30 +563,97 @@ class SolarExposureMap {
         return exposure;
     }
 
+    async calculateHorizonProfile(lat, lng, elevation) {
+        // Calculate horizon angles in all directions around a point
+        // Returns map of azimuth -> maximum horizon angle
+        // This is the "viewshed" approach used by ArcGIS Solar Radiation tools
+
+        const horizonProfile = new Map();
+        const azimuthStep = 10; // Sample every 10 degrees (36 directions)
+        const maxDistance = 10000; // 10km max for horizon detection
+        const stepSize = 100; // Sample every 100 meters
+        const zoom = Math.min(this.map.getZoom(), 12);
+
+        const metersPerDegreeLat = 111320;
+        const metersPerDegreeLng = 111320 * Math.cos(lat * Math.PI / 180);
+
+        // Sample horizon angle in each azimuth direction
+        for (let azimuth = 0; azimuth < 360; azimuth += azimuthStep) {
+            const azimuthRad = azimuth * Math.PI / 180;
+            let maxHorizonAngle = 0;
+
+            // Cast ray in this direction
+            const latStep = (Math.cos(azimuthRad) * stepSize) / metersPerDegreeLat;
+            const lngStep = (Math.sin(azimuthRad) * stepSize) / metersPerDegreeLng;
+
+            let currentLat = lat;
+            let currentLng = lng;
+            let distance = 0;
+
+            while (distance < maxDistance) {
+                distance += stepSize;
+                currentLat += latStep;
+                currentLng += lngStep;
+
+                const terrainHeight = await this.getRealElevation(currentLat, currentLng, zoom);
+
+                if (terrainHeight === null) break;
+
+                // Calculate angle from our point to this terrain point
+                const heightDiff = terrainHeight - elevation;
+                const horizonAngle = Math.atan2(heightDiff, distance) * 180 / Math.PI;
+
+                // Track maximum angle (highest obstruction)
+                if (horizonAngle > maxHorizonAngle) {
+                    maxHorizonAngle = horizonAngle;
+                }
+
+                // Early exit if we're looking down or angle is decreasing significantly
+                if (horizonAngle < maxHorizonAngle - 5) break;
+            }
+
+            horizonProfile.set(azimuth, maxHorizonAngle);
+        }
+
+        return horizonProfile;
+    }
+
+    getHorizonAngle(horizonProfile, azimuth) {
+        // Get horizon angle for a specific azimuth, with interpolation
+        const azimuthStep = 10;
+        const lowerAz = Math.floor(azimuth / azimuthStep) * azimuthStep;
+        const upperAz = (lowerAz + azimuthStep) % 360;
+
+        const lowerAngle = horizonProfile.get(lowerAz) || 0;
+        const upperAngle = horizonProfile.get(upperAz) || 0;
+
+        // Linear interpolation
+        const fraction = (azimuth - lowerAz) / azimuthStep;
+        return lowerAngle + (upperAngle - lowerAngle) * fraction;
+    }
+
     async calculateShadow(lat, lng, elevation) {
-        // TRUE terrain ray-casting for accurate shadow detection
+        // Check if sun is blocked by terrain using current sun position
+        // This is called for single-point checks
 
         if (this.sunAltitude < 0) {
             return 0; // Sun below horizon
         }
 
-        // Cast ray from point toward sun
-        const maxDistance = 5000; // 5km max shadow distance (meters)
-        const stepSize = 100; // Sample every 100 meters
-        const zoom = this.map.getZoom();
+        // Quick ray-cast toward sun for single-point shadow check
+        const maxDistance = 5000;
+        const stepSize = 100;
+        const zoom = Math.min(this.map.getZoom(), 12);
 
-        // Convert sun angles to direction vector
         const sunAzRad = this.sunAzimuth * Math.PI / 180;
         const sunAltRad = this.sunAltitude * Math.PI / 180;
 
-        // Calculate lat/lng step per meter in sun direction
         const metersPerDegreeLat = 111320;
         const metersPerDegreeLng = 111320 * Math.cos(lat * Math.PI / 180);
 
         const latStep = (Math.cos(sunAzRad) * stepSize) / metersPerDegreeLat;
         const lngStep = (Math.sin(sunAzRad) * stepSize) / metersPerDegreeLng;
 
-        // Ray-cast toward sun
         let currentLat = lat;
         let currentLng = lng;
         let distance = 0;
@@ -596,29 +663,15 @@ class SolarExposureMap {
             currentLat += latStep;
             currentLng += lngStep;
 
-            // Expected height of ray at this distance (accounting for sun angle)
             const rayHeight = elevation + distance * Math.tan(sunAltRad);
-
-            // Get actual terrain height at this point
             const terrainHeight = await this.getRealElevation(currentLat, currentLng, zoom);
 
-            if (terrainHeight === null) {
-                // Out of terrain data bounds, assume no shadow
-                break;
-            }
-
-            // If terrain is higher than ray, we're in shadow
-            if (terrainHeight > rayHeight) {
-                return 0; // In shadow
-            }
-
-            // Early exit optimization: if we're well above terrain, stop checking
-            if (rayHeight - terrainHeight > 500) {
-                break; // Ray is far above terrain, no shadow possible
-            }
+            if (terrainHeight === null) break;
+            if (terrainHeight > rayHeight) return 0;
+            if (rayHeight - terrainHeight > 500) break;
         }
 
-        return 1; // Not in shadow
+        return 1;
     }
 
     getExposureColor(aspect, exposure) {
@@ -739,15 +792,24 @@ class SolarExposureMap {
                 latlng.lng
             );
 
-            // Calculate terrain-aware sun times
+            // Calculate horizon profile ONCE for all sun time calculations
+            console.log('Calculating horizon profile (36 directions)...');
+            const horizonProfile = await this.calculateHorizonProfile(
+                latlng.lat, latlng.lng, terrainData.elevation
+            );
+            console.log('Horizon profile complete');
+
+            // Calculate terrain-aware sun times using horizon profile
             console.log('Calculating terrain-aware sun times...');
             const terrainSunTimes = await this.calculateTerrainAwareSunTimes(
-                latlng.lat, latlng.lng, terrainData.elevation, terrainData
+                latlng.lat, latlng.lng, terrainData.elevation, horizonProfile
             );
 
-            // Calculate slope sun times
+            // Calculate slope sun times using horizon profile
             console.log('Calculating slope sun times...');
-            const slopeTimes = await this.calculateSlopeSunTimes(latlng.lat, latlng.lng, terrainData);
+            const slopeTimes = await this.calculateSlopeSunTimes(
+                latlng.lat, latlng.lng, terrainData, horizonProfile
+            );
 
             // Update sun timeline
             const formatTime = (date) => date ? date.toTimeString().slice(0, 5) : '--:--';
@@ -858,8 +920,9 @@ class SolarExposureMap {
         return 0.5 + 0.5 * (1 - normalizedDiff / 180);
     }
 
-    async calculateTerrainAwareSunTimes(lat, lng, elevation, terrainData) {
+    async calculateTerrainAwareSunTimes(lat, lng, elevation, horizonProfile) {
         // Calculate when sun actually appears/disappears considering terrain occlusions
+        // Uses pre-calculated horizon profile for accurate terrain blocking
         const date = this.currentDate;
         const sunTimes = SunCalc.getTimes(date, lat, lng);
 
@@ -868,67 +931,44 @@ class SolarExposureMap {
 
         // Check if terrain blocks sunrise (eastern mountains)
         if (sunTimes.sunrise && !isNaN(sunTimes.sunrise)) {
-            const sunrisePos = SunCalc.getPosition(sunTimes.sunrise, lat, lng);
-            const sunriseAlt = sunrisePos.altitude * 180 / Math.PI;
+            // Walk forward from astronomical sunrise to find when sun clears terrain
+            const testDate = new Date(sunTimes.sunrise);
+            for (let i = 0; i < 180; i += 5) { // Check up to 3 hours after sunrise
+                testDate.setMinutes(sunTimes.sunrise.getMinutes() + i);
+                const testPos = SunCalc.getPosition(testDate, lat, lng);
+                const testAlt = testPos.altitude * 180 / Math.PI;
+                const testAz = ((testPos.azimuth * 180 / Math.PI) + 180) % 360;
 
-            // If sun altitude is low, check for terrain occlusion
-            if (sunriseAlt < 20) {
-                const testDate = new Date(sunTimes.sunrise);
-                // Check every 5 minutes after sunrise for terrain clearance
-                for (let i = 0; i < 60; i += 5) {
-                    testDate.setMinutes(testDate.getMinutes() + 5);
-                    const testPos = SunCalc.getPosition(testDate, lat, lng);
-                    const testAlt = testPos.altitude * 180 / Math.PI;
+                if (testAlt > 0) {
+                    const horizonAngle = this.getHorizonAngle(horizonProfile, testAz);
 
-                    if (testAlt > 0) {
-                        // Update temp sun position for shadow check
-                        const oldAlt = this.sunAltitude;
-                        const oldAz = this.sunAzimuth;
-                        this.sunAltitude = testAlt;
-                        this.sunAzimuth = ((testPos.azimuth * 180 / Math.PI) + 180) % 360;
-
-                        const shadow = await this.calculateShadow(lat, lng, elevation);
-
-                        // Restore sun position
-                        this.sunAltitude = oldAlt;
-                        this.sunAzimuth = oldAz;
-
-                        if (shadow > 0) {
-                            terrainSunrise = testDate;
-                            break;
-                        }
+                    // Sun is visible when altitude > horizon angle
+                    if (testAlt > horizonAngle) {
+                        terrainSunrise = new Date(testDate);
+                        break;
                     }
                 }
             }
         }
 
-        // Check if terrain blocks sunset (western mountains) - NEW!
+        // Check if terrain blocks sunset (western mountains)
         if (sunTimes.sunset && !isNaN(sunTimes.sunset)) {
+            // Walk backward from astronomical sunset to find when terrain starts blocking
             const testDate = new Date(sunTimes.sunset);
-            // Check backwards from sunset for when terrain starts blocking
-            for (let i = 0; i < 120; i += 5) {
-                testDate.setMinutes(testDate.getMinutes() - 5);
+            for (let i = 0; i < 180; i += 5) { // Check up to 3 hours before sunset
+                testDate.setMinutes(sunTimes.sunset.getMinutes() - i);
                 const testPos = SunCalc.getPosition(testDate, lat, lng);
                 const testAlt = testPos.altitude * 180 / Math.PI;
+                const testAz = ((testPos.azimuth * 180 / Math.PI) + 180) % 360;
 
                 if (testAlt > 0) {
-                    // Update temp sun position for shadow check
-                    const oldAlt = this.sunAltitude;
-                    const oldAz = this.sunAzimuth;
-                    this.sunAltitude = testAlt;
-                    this.sunAzimuth = ((testPos.azimuth * 180 / Math.PI) + 180) % 360;
+                    const horizonAngle = this.getHorizonAngle(horizonProfile, testAz);
 
-                    const shadow = await this.calculateShadow(lat, lng, elevation);
-
-                    // Restore sun position
-                    this.sunAltitude = oldAlt;
-                    this.sunAzimuth = oldAz;
-
-                    if (shadow > 0) {
-                        // Sun is NOT blocked at this time, keep checking earlier
-                        terrainSunset = testDate;
+                    // If sun is still visible, update terrain sunset
+                    if (testAlt > horizonAngle) {
+                        terrainSunset = new Date(testDate);
                     } else {
-                        // Sun is blocked, we found the last unblocked time
+                        // Sun blocked, found the cutoff
                         break;
                     }
                 }
@@ -941,16 +981,15 @@ class SolarExposureMap {
         };
     }
 
-    async calculateSlopeSunTimes(lat, lng, terrainData) {
+    async calculateSlopeSunTimes(lat, lng, terrainData, horizonProfile) {
         // Calculate EXACT times when sun hits and leaves this specific slope
-        // Using 15-minute intervals for precision
-        const date = this.currentDate;
+        // Uses pre-calculated horizon profile for accurate terrain occlusion
 
+        const date = this.currentDate;
         let slopeStartTime = null;
         let slopeEndTime = null;
         let lastExposedTime = null;
 
-        // Sample throughout the day with 15-minute precision
         const startOfDay = new Date(date);
         startOfDay.setHours(0, 0, 0, 0);
 
@@ -962,54 +1001,49 @@ class SolarExposureMap {
             testTime.setMinutes(minutes);
 
             const sunPos = SunCalc.getPosition(testTime, lat, lng);
-            const altitude = sunPos.altitude * 180 / Math.PI;
+            const sunAltitude = sunPos.altitude * 180 / Math.PI;
+            const sunAzimuth = ((sunPos.azimuth * 180 / Math.PI) + 180) % 360;
 
-            if (altitude > 0) {
-                // Calculate if slope is exposed at this time
-                const azimuth = ((sunPos.azimuth * 180 / Math.PI) + 180) % 360;
-
-                // Update temporary sun position for exposure calculation
-                const oldAlt = this.sunAltitude;
-                const oldAz = this.sunAzimuth;
-                this.sunAltitude = altitude;
-                this.sunAzimuth = azimuth;
-
-                const exposure = await this.calculateExposure(
-                    terrainData.aspect,
-                    terrainData.slope,
-                    terrainData.elevation,
-                    lat,
-                    lng
-                );
-
-                // Restore original sun position
-                this.sunAltitude = oldAlt;
-                this.sunAzimuth = oldAz;
-
-                if (exposure > 0) {
-                    // Track last time we had exposure
-                    lastExposedTime = new Date(testTime);
-
-                    if (!wasExposed) {
-                        // Sun just appeared on slope
-                        slopeStartTime = new Date(testTime);
-                        wasExposed = true;
-                    }
-                } else if (wasExposed) {
-                    // Sun just left slope
-                    slopeEndTime = new Date(testTime);
+            // Check if sun is above horizon
+            if (sunAltitude <= 0) {
+                if (wasExposed) {
+                    slopeEndTime = lastExposedTime;
                     wasExposed = false;
                 }
+                continue;
+            }
+
+            // Get horizon angle in sun's direction
+            const horizonAngle = this.getHorizonAngle(horizonProfile, sunAzimuth);
+
+            // Sun is blocked if altitude < horizon angle
+            const sunBlocked = sunAltitude < horizonAngle;
+
+            // Check if sun is facing the slope (dot product test)
+            const slopeFacing = this.isSlopeFacingSun(
+                terrainData.aspect,
+                terrainData.slope,
+                sunAzimuth,
+                sunAltitude
+            );
+
+            // Slope is exposed if: sun above horizon, not blocked, and facing slope
+            const isExposed = !sunBlocked && slopeFacing;
+
+            if (isExposed) {
+                lastExposedTime = new Date(testTime);
+
+                if (!wasExposed) {
+                    slopeStartTime = new Date(testTime);
+                    wasExposed = true;
+                }
             } else if (wasExposed) {
-                // Sun went below horizon while slope was still exposed
-                // Use last time we saw exposure (should never exceed terrain sunset)
-                slopeEndTime = lastExposedTime;
+                slopeEndTime = new Date(testTime);
                 wasExposed = false;
             }
         }
 
         // If still exposed at end of day, use last exposure time
-        // (NOT astronomical sunset - use actual last time we saw sun on slope)
         if (wasExposed && lastExposedTime) {
             slopeEndTime = lastExposedTime;
         }
@@ -1018,6 +1052,29 @@ class SolarExposureMap {
             slopeStart: slopeStartTime,
             slopeEnd: slopeEndTime
         };
+    }
+
+    isSlopeFacingSun(aspect, slope, sunAzimuth, sunAltitude) {
+        // Calculate if sun is facing the slope using dot product
+        const slopeRad = slope * Math.PI / 180;
+        const aspectRad = aspect * Math.PI / 180;
+        const sunAltRad = sunAltitude * Math.PI / 180;
+        const sunAzRad = sunAzimuth * Math.PI / 180;
+
+        // Slope normal vector (pointing outward from slope surface)
+        const slopeNx = Math.sin(slopeRad) * Math.sin(aspectRad);
+        const slopeNy = Math.sin(slopeRad) * Math.cos(aspectRad);
+        const slopeNz = Math.cos(slopeRad);
+
+        // Sun direction vector (pointing toward sun)
+        const sunDx = Math.cos(sunAltRad) * Math.sin(sunAzRad);
+        const sunDy = Math.cos(sunAltRad) * Math.cos(sunAzRad);
+        const sunDz = Math.sin(sunAltRad);
+
+        // Dot product - positive means sun is facing the slope
+        const dotProduct = slopeNx * sunDx + slopeNy * sunDy + slopeNz * sunDz;
+
+        return dotProduct > 0;
     }
 
     async calculateHourlyExposure(lat, lng, terrainData) {
