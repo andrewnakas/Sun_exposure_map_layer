@@ -932,9 +932,8 @@ class SolarExposureMap {
         // Check if terrain blocks sunrise (eastern mountains)
         if (sunTimes.sunrise && !isNaN(sunTimes.sunrise)) {
             // Walk forward from astronomical sunrise to find when sun clears terrain
-            const testDate = new Date(sunTimes.sunrise);
-            for (let i = 0; i < 180; i += 5) { // Check up to 3 hours after sunrise
-                testDate.setMinutes(sunTimes.sunrise.getMinutes() + i);
+            for (let i = 0; i < 180; i += 5) { // Check up to 3 hours after sunrise (in 5-min steps)
+                const testDate = new Date(sunTimes.sunrise.getTime() + i * 60 * 1000);
                 const testPos = SunCalc.getPosition(testDate, lat, lng);
                 const testAlt = testPos.altitude * 180 / Math.PI;
                 const testAz = ((testPos.azimuth * 180 / Math.PI) + 180) % 360;
@@ -944,7 +943,7 @@ class SolarExposureMap {
 
                     // Sun is visible when altitude > horizon angle
                     if (testAlt > horizonAngle) {
-                        terrainSunrise = new Date(testDate);
+                        terrainSunrise = testDate;
                         break;
                     }
                 }
@@ -954,9 +953,8 @@ class SolarExposureMap {
         // Check if terrain blocks sunset (western mountains)
         if (sunTimes.sunset && !isNaN(sunTimes.sunset)) {
             // Walk backward from astronomical sunset to find when terrain starts blocking
-            const testDate = new Date(sunTimes.sunset);
-            for (let i = 0; i < 180; i += 5) { // Check up to 3 hours before sunset
-                testDate.setMinutes(sunTimes.sunset.getMinutes() - i);
+            for (let i = 0; i < 180; i += 5) { // Check up to 3 hours before sunset (in 5-min steps)
+                const testDate = new Date(sunTimes.sunset.getTime() - i * 60 * 1000);
                 const testPos = SunCalc.getPosition(testDate, lat, lng);
                 const testAlt = testPos.altitude * 180 / Math.PI;
                 const testAz = ((testPos.azimuth * 180 / Math.PI) + 180) % 360;
@@ -966,7 +964,7 @@ class SolarExposureMap {
 
                     // If sun is still visible, update terrain sunset
                     if (testAlt > horizonAngle) {
-                        terrainSunset = new Date(testDate);
+                        terrainSunset = testDate;
                     } else {
                         // Sun blocked, found the cutoff
                         break;
