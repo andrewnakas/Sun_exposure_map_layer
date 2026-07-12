@@ -15,3 +15,5 @@ Thumbs.db
 # Temporary files
 *.tmp
 .cache/
+test/fixtures/
+node_modules/

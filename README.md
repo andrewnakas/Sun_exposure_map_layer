@@ -76,23 +76,20 @@ An interactive web application that calculates and visualizes real-time sun expo
 - **SunCalc**: Astronomical calculations for sun position
 - **OpenTopoMap**: Terrain base layer
 - **Canvas API**: High-performance exposure layer rendering
-- **Mapterhorn Terrain Tiles**: Global Terrarium-RGB elevation tiles
+- **Mapzen/AWS Terrain Tiles**: Global Terrarium-RGB elevation tiles
+- **tz-lookup** (vendored): the clicked location's IANA time zone
 
 ### Terrain Data Source
 
-This app uses **Mapterhorn terrain tiles** for global elevation coverage:
+This app uses **[Mapzen/AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/)**
+(SRTM, 3DEP, GEBCO and other open sources) for global elevation coverage:
 
-**Mapterhorn Terrain Tiles**
-- Modern, open-source terrain tiles from [Mapterhorn](https://mapterhorn.com/)
-- Terrarium-RGB encoding in WebP format (512x512 tiles)
-- **Global coverage**: 85°N to 85°S latitude at zoom 0-12
-- Cloudflare-backed infrastructure (R2 + Workers)
-- Free and open data
-
-**How it works:**
-- Terrain queries are automatically capped at zoom level 12 for global coverage
-- Works at any map zoom level - the app intelligently queries z12 tiles for elevation data
-- Covers entire planet except polar regions (>85° N/S)
+- Terrarium-RGB PNG tiles, decoded as `(R·256 + G + B/256) − 32768` meters
+- Global coverage at zoom 0–15; the app samples zoom 14 (~10 m/px) for
+  point/slope reads and coarser zooms for long horizon rays
+- Bilinear interpolation across tile boundaries, LRU tile cache, no API key
+- `js/terrain-client.js` and `js/solar-core.js` are shared with the sibling
+  [Sun Tracker](https://github.com/andrewnakas/Sun_Tracker_Leaflet) project
 
 ### Calculation Methods
 
@@ -101,11 +98,15 @@ Uses the SunCalc library to calculate:
 - **Azimuth**: Compass direction of the sun (0° = North)
 - **Altitude**: Angle of sun above horizon
 
+All displayed times are in the **clicked location's own time zone** (shown in
+the sidebar), and the analyzed day is anchored to local midnight there.
+
 #### 2. Slope Aspect & Angle
-Computed from elevation gradients:
+Computed from central-difference elevation gradients with sample spacing tied
+to the DEM's actual ground resolution:
 ```javascript
-aspect = atan2(dz/dx, dz/dy)  // Direction slope faces
-slope = atan(√((dz/dx)² + (dz/dy)²))  // Steepness
+slope  = atan(√((dz/dx)² + (dz/dy)²))       // Steepness
+aspect = atan2(-dz/dx, -dz/dy)              // Downhill (facing) direction
 ```
 
 #### 3. Sun Exposure
@@ -116,11 +117,24 @@ exposure = max(0, slopeNormal · sunDirection)
 
 This gives a value from 0 (no exposure) to 1 (perpendicular to sun).
 
-#### 4. Shadow Modeling
-- **TRUE 3D ray-casting** through digital elevation model (DEM)
-- Casts rays from clicked point toward sun at 100m intervals up to 5km
-- Compares ray height vs. terrain height to detect occlusion
-- Accurately models terrain shadows from ridges and peaks
+#### 4. Terrain Occlusion (Horizon Profile)
+- A 360° horizon profile is built once per clicked point: 72 azimuths,
+  geometric sample spacing from 30 m out to 40 km per ray
+- Each sample subtracts the earth-curvature + refraction drop
+  `(1 − k)·d²/(2R)` (k = 0.13); valleys can have *negative* horizon angles
+- The sun is visible when
+  `altitude + 0.267° + refraction(altitude) > horizon(azimuth)` — at a flat
+  horizon this reproduces standard almanac sunrise/sunset times
+- Terrain sunrise/sunset, sun-on/off-slope times and total sun hours all come
+  from full-day visibility intervals with edges refined by bisection (~10 s),
+  so notched horizons and multiple sun windows are handled correctly
+
+### Tests
+
+```bash
+node test/core-tests.mjs   # pure-math unit tests (no network)
+node test/e2e.mjs          # Playwright end-to-end checks (serves the app)
+```
 
 ### Performance Optimizations
 - **Spatial Sampling**: Renders at lower resolution based on zoom level

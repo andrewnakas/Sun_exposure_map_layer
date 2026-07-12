@@ -614,6 +614,7 @@
                     <div class="location-card">
                         <div class="location-title">Coordinates</div>
                         <div class="location-coords" id="location-coords">--</div>
+                        <div class="location-title" id="tz-label" style="margin-top: 6px;">--</div>
                     </div>
                 </div>
 
@@ -736,7 +737,7 @@
                     <div class="section-title">Time Controls</div>
                     <div class="time-control">
                         <div class="time-display" id="time-display-mobile">12:00</div>
-                        <input type="range" id="time-slider-mobile" min="0" max="1440" step="15" value="720">
+                        <input type="range" id="time-slider-mobile" min="0" max="1425" step="15" value="720">
                     </div>
                     <div class="date-control">
                         <label>Date</label>
@@ -766,7 +767,7 @@
         <div class="time-control">
             <label>Time of Day</label>
             <div class="time-display" id="time-display">12:00</div>
-            <input type="range" id="time-slider" min="0" max="1440" step="15" value="720">
+            <input type="range" id="time-slider" min="0" max="1425" step="15" value="720">
         </div>
 
         <div class="date-control">
@@ -802,6 +803,13 @@
 
     <!-- SunCalc -->
     <script src="https://cdn.jsdelivr.net/npm/suncalc@1.9.0/suncalc.js"></script>
+
+    <!-- Timezone lookup (vendored) -->
+    <script src="vendor/tz.js"></script>
+
+    <!-- Terrain + solar core -->
+    <script src="js/terrain-client.js"></script>
+    <script src="js/solar-core.js"></script>
 
     <!-- Main App -->
     <script src="js/app.js"></script>

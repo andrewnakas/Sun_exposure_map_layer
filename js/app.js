@@ -1,30 +1,36 @@
 /**
  * Solar Exposure Map Application
- * Calculates and visualizes sun exposure on terrain considering slope aspect and shadows
+ * Calculates and visualizes sun exposure on terrain considering slope aspect,
+ * terrain occlusion and the clicked location's own time zone.
+ *
+ * Terrain data: Mapzen/AWS Terrain Tiles via js/terrain-client.js.
+ * Solar/terrain math: js/solar-core.js (shared with the Sun Tracker app).
  */
+
+const { TerrainClient, POINT_ZOOM, groundResolution } = window.TerrainTiles;
 
 class SolarExposureMap {
     constructor() {
         this.map = null;
         this.exposureLayer = null;
-        this.currentDate = new Date();
         this.animationInterval = null;
+        this.terrain = new TerrainClient();
         this.terrainCache = new Map();
-        this.tileCache = new Map();
-        this.tileSize = 512;
         this.showShadows = true;
         this.showAspect = true;
-        this.clickMarker = null; // Marker for clicked location
+        this.clickMarker = null;
+        this.analysis = null;       // cached per-click horizon/slope state
+        this.overlayToken = 0;
 
         // Default location - Bridger Bowl, Montana (great skiing and terrain analysis!)
-        this.defaultCenter = [45.8165, -110.9045]; // Bridger Bowl
-        this.defaultZoom = 13; // Good detail for terrain analysis
+        this.defaultCenter = [45.8165, -110.9045];
+        this.defaultZoom = 13;
 
-        // Mapterhorn terrain tiles - Modern, reliable, Cloudflare-backed
-        // Global coverage at z0-12 (z13-17 regional only, incomplete)
-        // Format: Terrarium RGB encoding in WebP format (512x512)
-        // Terrain queries automatically capped at z12 for global coverage
-        this.terrainTileUrl = 'https://tiles.mapterhorn.com/{z}/{x}/{y}.webp';
+        // Time model: a calendar date string plus minutes-since-midnight,
+        // both interpreted in the analyzed location's time zone.
+        this.timeZone = tzlookup(this.defaultCenter[0], this.defaultCenter[1]);
+        this.dateStr = new Date().toISOString().split('T')[0];
+        this.sliderMinutes = 720;
 
         this.init();
     }
@@ -37,152 +43,131 @@ class SolarExposureMap {
         this.setupEventListeners();
     }
 
+    // The instant currently selected by the date + time controls,
+    // anchored to local midnight in the analyzed location's zone.
+    currentTime() {
+        const dayStart = SolarCore.zonedMidnightUTC(this.dateStr, this.timeZone);
+        return new Date(dayStart.getTime() + this.sliderMinutes * 60000);
+    }
+
     initMap() {
-        // Initialize Leaflet map
         this.map = L.map('map', {
             center: this.defaultCenter,
             zoom: this.defaultZoom,
             zoomControl: true
         });
 
-        // Add base map layer (terrain style)
         L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
-            attribution: 'Map data: &copy; OpenStreetMap contributors, SRTM | Map style: &copy; OpenTopoMap',
+            attribution: 'Map data: &copy; OpenStreetMap contributors, SRTM | Map style: &copy; OpenTopoMap' +
+                ' | Elevation: <a href="https://registry.opendata.aws/terrain-tiles/">Mapzen/AWS Terrain Tiles</a>',
             maxZoom: 17
         }).addTo(this.map);
 
-        // Add scale control
         L.control.scale().addTo(this.map);
 
-        // Update location display
-        this.updateLocationDisplay();
-
-        // Listen to map movements
         this.map.on('moveend', () => {
-            this.updateLocationDisplay();
+            if (this.showAspect) this.updateExposureLayer();
         });
 
-        this.map.on('zoomend', () => {
-            // Aspect overlay updates handled by toggle only
-        });
-
-        // Click handler for detailed info
         this.map.on('click', (e) => {
             this.showPointInfo(e.latlng);
         });
+    }
 
-        // Mouse move for hover info
-        this.map.on('mousemove', (e) => {
-            this.updateHoverInfo(e);
-        });
+    // Wall-clock "now" in the active time zone -> {dateStr, minutes}
+    wallClockNow() {
+        const parts = new Intl.DateTimeFormat('en-US', {
+            timeZone: this.timeZone,
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+        }).formatToParts(new Date());
+        const get = (t) => parts.find((p) => p.type === t).value;
+        return {
+            dateStr: `${get('year')}-${get('month')}-${get('day')}`,
+            minutes: Number(get('hour')) * 60 + Number(get('minute')),
+        };
+    }
+
+    // Return every control element matching the desktop and mobile ids.
+    controlEls(id) {
+        return [id, `${id}-mobile`]
+            .map((elId) => document.getElementById(elId))
+            .filter(Boolean);
     }
 
     initControls() {
-        // Date input
-        const dateInput = document.getElementById('date-input');
-        const today = new Date();
-        dateInput.value = today.toISOString().split('T')[0];
-        this.currentDate = today;
+        const now = this.wallClockNow();
+        this.dateStr = now.dateStr;
+        this.sliderMinutes = Math.min(1425, Math.round(now.minutes / 15) * 15);
 
-        // Time slider
-        const timeSlider = document.getElementById('time-slider');
-        const currentMinutes = today.getHours() * 60 + today.getMinutes();
-        timeSlider.value = currentMinutes;
-        this.updateTimeDisplay(currentMinutes);
-
-        // Shadow toggle
-        document.getElementById('shadow-toggle').checked = this.showShadows;
-
-        // Aspect toggle
-        document.getElementById('aspect-toggle').checked = this.showAspect;
-
-        // Old drawer replaced with controls-drawer and solar-sidebar in new UI
-        // Sidebar toggle handled in index.html inline script
-
-        // Info button and popup removed in new UI design
-        // Solar data now shown in sidebar
+        this.controlEls('date-input').forEach((el) => { el.value = this.dateStr; });
+        this.controlEls('time-slider').forEach((el) => { el.value = this.sliderMinutes; });
+        this.controlEls('shadow-toggle').forEach((el) => { el.checked = this.showShadows; });
+        this.controlEls('aspect-toggle').forEach((el) => { el.checked = this.showAspect; });
+        this.updateTimeDisplay();
     }
 
     setupEventListeners() {
-        // Date change
-        document.getElementById('date-input').addEventListener('change', (e) => {
-            const [year, month, day] = e.target.value.split('-');
-            this.currentDate.setFullYear(year, month - 1, day);
+        // Each control exists twice (desktop + mobile); bind both and mirror values.
+        this.controlEls('date-input').forEach((el) => el.addEventListener('change', (e) => {
+            this.dateStr = e.target.value;
+            this.controlEls('date-input').forEach((other) => { other.value = this.dateStr; });
             this.updateSunPosition();
-        });
+            this.renderAnalysis();
+        }));
 
-        // Time slider
-        document.getElementById('time-slider').addEventListener('input', (e) => {
-            const minutes = parseInt(e.target.value);
-            this.updateTimeDisplay(minutes);
-
-            const hours = Math.floor(minutes / 60);
-            const mins = minutes % 60;
-            this.currentDate.setHours(hours, mins);
-
+        this.controlEls('time-slider').forEach((el) => el.addEventListener('input', (e) => {
+            this.sliderMinutes = parseInt(e.target.value, 10);
+            this.controlEls('time-slider').forEach((other) => { other.value = this.sliderMinutes; });
+            this.updateTimeDisplay();
             this.updateSunPosition();
-        });
+            this.renderCurrentExposure();
+        }));
 
-        // Now button
-        document.getElementById('now-button').addEventListener('click', () => {
-            const now = new Date();
-            this.currentDate = now;
-
-            document.getElementById('date-input').value = now.toISOString().split('T')[0];
-            const minutes = now.getHours() * 60 + now.getMinutes();
-            document.getElementById('time-slider').value = minutes;
-            this.updateTimeDisplay(minutes);
-
+        this.controlEls('now-button').forEach((el) => el.addEventListener('click', () => {
+            const now = this.wallClockNow();
+            this.dateStr = now.dateStr;
+            this.sliderMinutes = Math.min(1425, Math.round(now.minutes / 15) * 15);
+            this.controlEls('date-input').forEach((other) => { other.value = this.dateStr; });
+            this.controlEls('time-slider').forEach((other) => { other.value = this.sliderMinutes; });
+            this.updateTimeDisplay();
             this.updateSunPosition();
-        });
+            this.renderAnalysis();
+        }));
 
-        // Animate button
-        document.getElementById('animate-button').addEventListener('click', () => {
+        this.controlEls('animate-button').forEach((el) => el.addEventListener('click', () => {
             this.toggleAnimation();
-        });
+        }));
 
-        // Shadow toggle - affects click calculations only
-        document.getElementById('shadow-toggle').addEventListener('change', (e) => {
+        this.controlEls('shadow-toggle').forEach((el) => el.addEventListener('change', (e) => {
             this.showShadows = e.target.checked;
-        });
+            this.controlEls('shadow-toggle').forEach((other) => { other.checked = this.showShadows; });
+            this.renderCurrentExposure();
+        }));
 
-        // Aspect toggle
-        document.getElementById('aspect-toggle').addEventListener('change', (e) => {
+        this.controlEls('aspect-toggle').forEach((el) => el.addEventListener('change', (e) => {
             this.showAspect = e.target.checked;
+            this.controlEls('aspect-toggle').forEach((other) => { other.checked = this.showAspect; });
             this.updateExposureLayer();
-        });
+        }));
     }
 
-    updateTimeDisplay(minutes) {
-        const hours = Math.floor(minutes / 60);
-        const mins = minutes % 60;
+    updateTimeDisplay() {
+        const hours = Math.floor(this.sliderMinutes / 60);
+        const mins = this.sliderMinutes % 60;
         const timeStr = `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
-
-        // Update desktop time display
-        const desktopDisplay = document.getElementById('time-display');
-        if (desktopDisplay) {
-            desktopDisplay.textContent = timeStr;
-        }
-
-        // Update mobile time display
-        const mobileDisplay = document.getElementById('time-display-mobile');
-        if (mobileDisplay) {
-            mobileDisplay.textContent = timeStr;
-        }
+        this.controlEls('time-display').forEach((el) => { el.textContent = timeStr; });
     }
 
     updateSunPosition() {
+        // Map-center sun position for the header badge only; per-point analysis
+        // always computes the sun at the clicked location.
         const center = this.map.getCenter();
-        const sunPos = SunCalc.getPosition(this.currentDate, center.lat, center.lng);
+        const sunPos = SunCalc.getPosition(this.currentTime(), center.lat, center.lng);
 
-        // Convert to degrees
-        const azimuth = ((sunPos.azimuth * 180 / Math.PI) + 180) % 360; // 0 = North
+        const azimuth = ((sunPos.azimuth * 180 / Math.PI) + 180) % 360;
         const altitude = sunPos.altitude * 180 / Math.PI;
 
-        this.sunAzimuth = azimuth;
-        this.sunAltitude = altitude;
-
-        // Update sun badge
         const sunBadge = document.getElementById('sun-badge');
         if (altitude < 0) {
             sunBadge.textContent = '🌙 Night';
@@ -191,11 +176,6 @@ class SolarExposureMap {
         } else {
             sunBadge.textContent = '☀ ' + azimuth.toFixed(0) + '° / ' + altitude.toFixed(0) + '°';
         }
-    }
-
-    updateLocationDisplay() {
-        // Location now displayed in sidebar when point is clicked
-        // No need to update on map move
     }
 
     createExposureLayer() {
@@ -241,54 +221,56 @@ class SolarExposureMap {
 
         this.exposureLayer = new ExposureOverlay();
         this.exposureLayer.addTo(this.map);
-
-        // Only update on toggle, not automatically
     }
 
     async updateExposureLayer() {
-        if (!this.exposureLayer || !this.showAspect) {
-            // Clear canvas if aspect is hidden
-            if (this.exposureLayer) {
-                const canvas = this.exposureLayer.getCanvas();
-                if (canvas) {
-                    const ctx = canvas.getContext('2d');
-                    ctx.clearRect(0, 0, canvas.width, canvas.height);
-                }
-            }
+        if (!this.exposureLayer) return;
+        const canvas = this.exposureLayer.getCanvas();
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+
+        if (!this.showAspect) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
             return;
         }
 
-        const canvas = this.exposureLayer.getCanvas();
-        if (!canvas) return;
-
-        const ctx = canvas.getContext('2d');
-        const width = canvas.width;
-        const height = canvas.height;
-
-        // Clear canvas
-        ctx.clearRect(0, 0, width, height);
-
-        // Simple aspect rendering (NO shadows, NO ray-casting)
-        await this.renderSimpleAspect(ctx, width, height);
+        const token = ++this.overlayToken;
+        await this.renderSimpleAspect(ctx, canvas.width, canvas.height, token);
     }
 
-    async renderSimpleAspect(ctx, width, height) {
+    async renderSimpleAspect(ctx, width, height, token) {
+        const zoom = Math.min(this.map.getZoom(), 12);
+        const bounds = this.map.getBounds().pad(0.05);
+
+        // Prefetch every tile the viewport needs, then sample synchronously —
+        // no per-pixel awaits.
+        await this.terrain.prefetchBounds({
+            north: bounds.getNorth(), south: bounds.getSouth(),
+            east: bounds.getEast(), west: bounds.getWest(),
+        }, zoom);
+        if (token !== this.overlayToken) return; // superseded by a newer render
+
         const imageData = ctx.createImageData(width, height);
         const data = imageData.data;
-        const zoom = this.map.getZoom();
+        const sampleRate = Math.max(4, Math.floor(16 - this.map.getZoom()));
 
-        // Coarse sampling for aspect overlay
-        const sampleRate = Math.max(4, Math.floor(16 - zoom));
+        const deltaM = 1.5 * groundResolution(this.map.getCenter().lat, zoom);
+        const dLat = deltaM / 111320;
 
         for (let y = 0; y < height; y += sampleRate) {
             for (let x = 0; x < width; x += sampleRate) {
                 const point = this.map.containerPointToLatLng([x, y]);
-                const terrainData = await this.getTerrainData(point.lat, point.lng, zoom);
+                const dLng = deltaM / (111320 * Math.cos(point.lat * Math.PI / 180));
+                const north = this.terrain.getElevationSync(point.lat + dLat, point.lng, zoom);
+                const south = this.terrain.getElevationSync(point.lat - dLat, point.lng, zoom);
+                const east = this.terrain.getElevationSync(point.lat, point.lng + dLng, zoom);
+                const west = this.terrain.getElevationSync(point.lat, point.lng - dLng, zoom);
+                if (north === null || south === null || east === null || west === null) continue;
 
-                if (!terrainData) continue;
-
-                // Simple aspect color (no shadow calculation)
-                const color = this.getAspectColor(terrainData.aspect);
+                const dzdx = (east - west) / (2 * deltaM);
+                const dzdy = (north - south) / (2 * deltaM);
+                const aspect = ((Math.atan2(-dzdx, -dzdy) * 180 / Math.PI) + 360) % 360;
+                const color = this.getAspectColor(aspect);
 
                 for (let dy = 0; dy < sampleRate && (y + dy) < height; dy++) {
                     for (let dx = 0; dx < sampleRate && (x + dx) < width; dx++) {
@@ -302,6 +284,8 @@ class SolarExposureMap {
             }
         }
 
+        if (token !== this.overlayToken) return;
+        ctx.clearRect(0, 0, width, height);
         ctx.putImageData(imageData, 0, 0);
     }
 
@@ -327,410 +311,52 @@ class SolarExposureMap {
         };
     }
 
-    async getTerrainData(lat, lng, zoom) {
-        const key = `${lat.toFixed(4)},${lng.toFixed(4)}`;
+    // Elevation + slope/aspect at a point, cached by DEM pixel.
+    async getTerrainData(lat, lng) {
+        const { px, py } = this.terrain.project(lat, lng, POINT_ZOOM);
+        const key = `${Math.round(px)}/${Math.round(py)}`;
 
         if (this.terrainCache.has(key)) {
             return this.terrainCache.get(key);
         }
 
-        // Cap zoom at 12 for global Mapterhorn coverage (z0-12 is global, z13-17 is regional only)
-        const terrainZoom = Math.min(zoom, 12);
+        const result = await SolarCore.computeSlopeAspect(
+            this.terrain, lat, lng, POINT_ZOOM, groundResolution(lat, POINT_ZOOM)
+        );
+        if (!result) return null;
 
-        // Get real elevation from terrain tiles
-        const elevation = await this.getRealElevation(lat, lng, terrainZoom);
-
-        if (elevation === null) {
-            return null;
-        }
-
-        // Calculate slope and aspect from real terrain
-        const { aspect, slope } = await this.calculateRealSlopeAspect(lat, lng, terrainZoom);
-
-        const data = { elevation, aspect, slope };
-        this.terrainCache.set(key, data);
-
-        // Limit cache size
+        this.terrainCache.set(key, result);
         if (this.terrainCache.size > 10000) {
-            const firstKey = this.terrainCache.keys().next().value;
-            this.terrainCache.delete(firstKey);
+            this.terrainCache.delete(this.terrainCache.keys().next().value);
         }
-
-        return data;
+        return result;
     }
 
-    latLngToTile(lat, lng, zoom) {
-        // Convert lat/lng to tile coordinates
-        const x = Math.floor((lng + 180) / 360 * Math.pow(2, zoom));
-        const y = Math.floor((1 - Math.log(Math.tan(lat * Math.PI / 180) + 1 / Math.cos(lat * Math.PI / 180)) / Math.PI) / 2 * Math.pow(2, zoom));
-        return { x, y, z: zoom };
-    }
-
-    async loadTerrainTile(tileX, tileY, zoom) {
-        const tileKey = `${zoom}/${tileX}/${tileY}`;
-
-        if (this.tileCache.has(tileKey)) {
-            return this.tileCache.get(tileKey);
-        }
-
-        try {
-            const url = this.terrainTileUrl
-                .replace('{z}', zoom)
-                .replace('{x}', tileX)
-                .replace('{y}', tileY);
-
-            console.log('Loading terrain tile from:', url);
-
-            const img = await this.loadImage(url);
-
-            console.log('Image loaded:', img.width, 'x', img.height);
-
-            // Draw to canvas to get pixel data
-            const canvas = document.createElement('canvas');
-            canvas.width = this.tileSize;
-            canvas.height = this.tileSize;
-            const ctx = canvas.getContext('2d');
-            ctx.drawImage(img, 0, 0);
-
-            const imageData = ctx.getImageData(0, 0, this.tileSize, this.tileSize);
-
-            // Check if we got valid data (not all zeros)
-            let hasData = false;
-            for (let i = 0; i < imageData.data.length; i += 4) {
-                if (imageData.data[i] !== 0 || imageData.data[i+1] !== 0 || imageData.data[i+2] !== 0) {
-                    hasData = true;
-                    break;
-                }
-            }
-
-            if (!hasData) {
-                console.warn('Terrain tile appears to be all black - no valid elevation data');
-            }
-
-            this.tileCache.set(tileKey, imageData);
-
-            // Limit tile cache size
-            if (this.tileCache.size > 50) {
-                const firstKey = this.tileCache.keys().next().value;
-                this.tileCache.delete(firstKey);
-            }
-
-            return imageData;
-        } catch (error) {
-            console.error('Error loading terrain tile:', error);
-            return null;
-        }
-    }
-
-    loadImage(url) {
-        return new Promise((resolve, reject) => {
-            const img = new Image();
-            img.crossOrigin = 'anonymous';
-            img.onload = () => resolve(img);
-            img.onerror = reject;
-            img.src = url;
-        });
-    }
-
-    decodeTerrainRGB(r, g, b) {
-        // Terrarium format: elevation = (R * 256 + G + B / 256) - 32768
-        return (r * 256 + g + b / 256) - 32768;
-    }
-
-    async getRealElevation(lat, lng, zoom) {
-        const tile = this.latLngToTile(lat, lng, zoom);
-        console.log('Tile coords:', tile);
-
-        const tileData = await this.loadTerrainTile(tile.x, tile.y, zoom);
-
-        if (!tileData) {
-            console.warn('Failed to load terrain tile at zoom', zoom);
-            return null;
-        }
-
-        // Convert lat/lng to pixel position within tile
-        const scale = Math.pow(2, zoom);
-        const worldX = (lng + 180) / 360 * scale;
-        const worldY = (1 - Math.log(Math.tan(lat * Math.PI / 180) + 1 / Math.cos(lat * Math.PI / 180)) / Math.PI) / 2 * scale;
-
-        const pixelX = Math.floor((worldX - tile.x) * this.tileSize);
-        const pixelY = Math.floor((worldY - tile.y) * this.tileSize);
-
-        console.log('Pixel coords:', pixelX, pixelY);
-
-        if (pixelX < 0 || pixelX >= this.tileSize || pixelY < 0 || pixelY >= this.tileSize) {
-            console.warn('Pixel coords out of bounds');
-            return null;
-        }
-
-        const idx = (pixelY * this.tileSize + pixelX) * 4;
-        const r = tileData.data[idx];
-        const g = tileData.data[idx + 1];
-        const b = tileData.data[idx + 2];
-
-        console.log('RGB values:', r, g, b);
-
-        // Check if pixel is blank (no data)
-        if (r === 0 && g === 0 && b === 0) {
-            console.warn('No elevation data at this pixel - tile may be empty');
-            return null;
-        }
-
-        const elevation = this.decodeTerrainRGB(r, g, b);
-        console.log('Decoded elevation:', elevation, 'm');
-
-        return elevation;
-    }
-
-    async calculateRealSlopeAspect(lat, lng, zoom) {
-        // Get elevations at neighboring points
-        const delta = 0.0001; // ~11 meters
-
-        const elevCenter = await this.getRealElevation(lat, lng, zoom);
-        const elevNorth = await this.getRealElevation(lat + delta, lng, zoom);
-        const elevSouth = await this.getRealElevation(lat - delta, lng, zoom);
-        const elevEast = await this.getRealElevation(lat, lng + delta, zoom);
-        const elevWest = await this.getRealElevation(lat, lng - delta, zoom);
-
-        // If any elevation is null, return flat terrain
-        if (elevCenter === null || elevNorth === null || elevSouth === null ||
-            elevEast === null || elevWest === null) {
-            return { aspect: 0, slope: 0 };
-        }
-
-        // Calculate gradients in meters
-        // In GIS, y-axis increases downward (south), not upward (north)
-        const metersPerDegree = 111320 * Math.cos(lat * Math.PI / 180);
-        const dzdx = (elevEast - elevWest) / (2 * delta * metersPerDegree);
-        const dzdy = (elevSouth - elevNorth) / (2 * delta * 111320);
-
-        // Calculate slope (in degrees)
-        const slopeRad = Math.atan(Math.sqrt(dzdx * dzdx + dzdy * dzdy));
-        const slope = slopeRad * 180 / Math.PI;
-
-        // Calculate aspect using standard GIS formula (ArcGIS method)
-        // atan2(dz/dy, -dz/dx) gives aspect in MATHEMATICAL coords (0° = East)
-        // Need to convert to GEOGRAPHIC coords (0° = North)
-        let mathAspect = Math.atan2(dzdy, -dzdx) * 180 / Math.PI;
-
-        // Convert from mathematical coords (0=East) to geographic coords (0=North)
-        // Geographic = 90° - Mathematical
-        let aspect = 90 - mathAspect;
-
-        // Normalize to 0-360 range
-        if (aspect < 0) aspect += 360;
-        if (aspect >= 360) aspect -= 360;
-
-        return { aspect, slope };
-    }
-
-    async calculateExposure(aspect, slope, elevation, lat, lng) {
-        // Calculate how much sun exposure this slope receives
-
-        if (this.sunAltitude < 0) {
-            // Sun is below horizon
-            return 0;
-        }
-
-        // Calculate dot product between slope normal and sun direction
-        const slopeRad = slope * Math.PI / 180;
-        const aspectRad = aspect * Math.PI / 180;
-        const sunAltRad = this.sunAltitude * Math.PI / 180;
-        const sunAzRad = this.sunAzimuth * Math.PI / 180;
-
-        // Slope normal vector
-        const slopeNx = Math.sin(slopeRad) * Math.sin(aspectRad);
-        const slopeNy = Math.sin(slopeRad) * Math.cos(aspectRad);
-        const slopeNz = Math.cos(slopeRad);
-
-        // Sun direction vector
-        const sunDx = Math.cos(sunAltRad) * Math.sin(sunAzRad);
-        const sunDy = Math.cos(sunAltRad) * Math.cos(sunAzRad);
-        const sunDz = Math.sin(sunAltRad);
-
-        // Dot product (cosine of angle between vectors)
-        let exposure = slopeNx * sunDx + slopeNy * sunDy + slopeNz * sunDz;
-
-        // Clamp to 0-1 range
-        exposure = Math.max(0, Math.min(1, exposure));
-
-        // Apply terrain shadow ray-casting if enabled
-        if (this.showShadows && exposure > 0) {
-            const shadowFactor = await this.calculateShadow(lat, lng, elevation);
-            exposure *= shadowFactor;
-        }
-
-        return exposure;
-    }
-
-    async calculateHorizonProfile(lat, lng, elevation) {
-        // Calculate horizon angles in all directions around a point
-        // Returns map of azimuth -> maximum horizon angle
-        // This is the "viewshed" approach used by ArcGIS Solar Radiation tools
-
-        const horizonProfile = new Map();
-        const azimuthStep = 10; // Sample every 10 degrees (36 directions)
-        const maxDistance = 10000; // 10km max for horizon detection
-        const stepSize = 100; // Sample every 100 meters
-        const zoom = Math.min(this.map.getZoom(), 12);
-
-        const metersPerDegreeLat = 111320;
-        const metersPerDegreeLng = 111320 * Math.cos(lat * Math.PI / 180);
-
-        // Sample horizon angle in each azimuth direction
-        for (let azimuth = 0; azimuth < 360; azimuth += azimuthStep) {
-            const azimuthRad = azimuth * Math.PI / 180;
-            let maxHorizonAngle = 0;
-
-            // Cast ray in this direction
-            const latStep = (Math.cos(azimuthRad) * stepSize) / metersPerDegreeLat;
-            const lngStep = (Math.sin(azimuthRad) * stepSize) / metersPerDegreeLng;
-
-            let currentLat = lat;
-            let currentLng = lng;
-            let distance = 0;
-
-            while (distance < maxDistance) {
-                distance += stepSize;
-                currentLat += latStep;
-                currentLng += lngStep;
-
-                const terrainHeight = await this.getRealElevation(currentLat, currentLng, zoom);
-
-                if (terrainHeight === null) break;
-
-                // Calculate angle from our point to this terrain point
-                const heightDiff = terrainHeight - elevation;
-                const horizonAngle = Math.atan2(heightDiff, distance) * 180 / Math.PI;
-
-                // Track maximum angle (highest obstruction)
-                if (horizonAngle > maxHorizonAngle) {
-                    maxHorizonAngle = horizonAngle;
-                }
-
-                // Early exit if we're looking down or angle is decreasing significantly
-                if (horizonAngle < maxHorizonAngle - 5) break;
-            }
-
-            horizonProfile.set(azimuth, maxHorizonAngle);
-        }
-
-        return horizonProfile;
-    }
-
-    getHorizonAngle(horizonProfile, azimuth) {
-        // Get horizon angle for a specific azimuth, with interpolation
-        const azimuthStep = 10;
-        const lowerAz = Math.floor(azimuth / azimuthStep) * azimuthStep;
-        const upperAz = (lowerAz + azimuthStep) % 360;
-
-        const lowerAngle = horizonProfile.get(lowerAz) || 0;
-        const upperAngle = horizonProfile.get(upperAz) || 0;
-
-        // Linear interpolation
-        const fraction = (azimuth - lowerAz) / azimuthStep;
-        return lowerAngle + (upperAngle - lowerAngle) * fraction;
-    }
-
-    async calculateShadow(lat, lng, elevation) {
-        // Check if sun is blocked by terrain using current sun position
-        // This is called for single-point checks
-
-        if (this.sunAltitude < 0) {
-            return 0; // Sun below horizon
-        }
-
-        // Quick ray-cast toward sun for single-point shadow check
-        const maxDistance = 5000;
-        const stepSize = 100;
-        const zoom = Math.min(this.map.getZoom(), 12);
-
-        const sunAzRad = this.sunAzimuth * Math.PI / 180;
-        const sunAltRad = this.sunAltitude * Math.PI / 180;
-
-        const metersPerDegreeLat = 111320;
-        const metersPerDegreeLng = 111320 * Math.cos(lat * Math.PI / 180);
-
-        const latStep = (Math.cos(sunAzRad) * stepSize) / metersPerDegreeLat;
-        const lngStep = (Math.sin(sunAzRad) * stepSize) / metersPerDegreeLng;
-
-        let currentLat = lat;
-        let currentLng = lng;
-        let distance = 0;
-
-        while (distance < maxDistance) {
-            distance += stepSize;
-            currentLat += latStep;
-            currentLng += lngStep;
-
-            const rayHeight = elevation + distance * Math.tan(sunAltRad);
-            const terrainHeight = await this.getRealElevation(currentLat, currentLng, zoom);
-
-            if (terrainHeight === null) break;
-            if (terrainHeight > rayHeight) return 0;
-            if (rayHeight - terrainHeight > 500) break;
-        }
-
-        return 1;
-    }
-
-    getExposureColor(aspect, exposure) {
-        if (!this.showAspect) {
-            // Simple exposure gradient
-            const intensity = Math.floor(exposure * 255);
-            return {
-                r: intensity,
-                g: intensity,
-                b: 0,
-                a: 180
-            };
-        }
-
-        // Color based on aspect and exposure
-        let baseColor;
-
-        // North (0/360) - Blue (cold, shaded)
-        // East (90) - Yellow (morning sun)
-        // South (180) - Red (hot, maximum sun)
-        // West (270) - Orange (afternoon sun)
-
-        if (aspect >= 315 || aspect < 45) {
-            // North - Blue
-            baseColor = { r: 77, g: 77, b: 255 };
-        } else if (aspect >= 45 && aspect < 135) {
-            // East - Yellow
-            baseColor = { r: 255, g: 255, b: 0 };
-        } else if (aspect >= 135 && aspect < 225) {
-            // South - Red
-            baseColor = { r: 255, g: 0, b: 0 };
-        } else {
-            // West - Orange
-            baseColor = { r: 255, g: 128, b: 0 };
-        }
-
-        // Modulate by exposure (shadows darken the color)
-        const shadowFactor = 0.2 + (exposure * 0.8); // Keep some base visibility
-
+    // Instantaneous exposure (0..1) of the analyzed slope at a given time.
+    exposureAt(time) {
+        const { terrainData, horizonProfile, sampler } = this.analysis;
+        const pos = sampler(time);
+        if (pos.altitude <= -0.8333) return { exposure: 0, altitude: pos.altitude };
+
+        const clearsTerrain = !this.showShadows
+            || pos.altitude + SolarCore.SUN_SEMIDIAMETER + SolarCore.bennettRefraction(pos.altitude)
+                > SolarCore.horizonAt(horizonProfile, pos.azimuth);
+        const incidence = SolarCore.slopeIncidence(
+            pos.altitude, pos.azimuth, terrainData.slope, terrainData.aspect
+        );
         return {
-            r: Math.floor(baseColor.r * shadowFactor),
-            g: Math.floor(baseColor.g * shadowFactor),
-            b: Math.floor(baseColor.b * shadowFactor),
-            a: 160 // Semi-transparent
+            exposure: clearsTerrain && pos.altitude > 0 ? Math.max(0, Math.min(1, incidence)) : 0,
+            altitude: pos.altitude,
         };
     }
 
     async showPointInfo(latlng) {
-        // Show loading while calculating
         document.getElementById('loading').classList.add('active');
-
-        // Store clicked location
-        this.clickedLocation = latlng;
 
         // Add or update marker at clicked location
         if (this.clickMarker) {
             this.clickMarker.setLatLng(latlng);
         } else {
-            // Create custom icon
             const markerIcon = L.divIcon({
                 className: 'custom-marker',
                 html: `
@@ -751,105 +377,27 @@ class SolarExposureMap {
         }
 
         try {
-            const zoom = this.map.getZoom();
+            this.timeZone = tzlookup(latlng.lat, latlng.lng);
 
-            console.log('Clicked:', latlng.lat, latlng.lng, 'Zoom:', zoom);
-
-            const terrainData = await this.getTerrainData(latlng.lat, latlng.lng, zoom);
-
+            const terrainData = await this.getTerrainData(latlng.lat, latlng.lng);
             if (!terrainData) {
-                console.error('No terrain data available for this location');
                 document.getElementById('loading').classList.remove('active');
                 alert('No terrain data available for this location. Try a different area or check your connection.');
                 return;
             }
 
-            console.log('Terrain data:', terrainData);
-
-            // Hide empty state, show solar data
-            document.getElementById('empty-state').style.display = 'none';
-            document.getElementById('solar-data').style.display = 'block';
-
-            // Update location coordinates
-            document.getElementById('location-coords').textContent =
-                `${latlng.lat.toFixed(6)}°, ${latlng.lng.toFixed(6)}°`;
-
-            // Update terrain stats
-            document.getElementById('elevation-value').textContent = Math.round(terrainData.elevation);
-            document.getElementById('slope-value').textContent = terrainData.slope.toFixed(1);
-
-            // Get slope facing direction (relative to sun position)
-            const slopeFacing = this.getSlopeFacing(terrainData.aspect);
-            document.getElementById('aspect-value').textContent =
-                `${this.getAspectDirection(terrainData.aspect)} (${terrainData.aspect.toFixed(0)}°) - ${slopeFacing} facing`;
-
-            // Calculate current exposure
-            const exposure = await this.calculateExposure(
-                terrainData.aspect,
-                terrainData.slope,
-                terrainData.elevation,
-                latlng.lat,
-                latlng.lng
+            const horizonProfile = await SolarCore.computeHorizonProfile(
+                this.terrain, latlng.lat, latlng.lng, terrainData.elevation
             );
 
-            // Calculate horizon profile ONCE for all sun time calculations
-            console.log('Calculating horizon profile (36 directions)...');
-            const horizonProfile = await this.calculateHorizonProfile(
-                latlng.lat, latlng.lng, terrainData.elevation
-            );
-            console.log('Horizon profile complete');
+            this.analysis = {
+                latlng,
+                terrainData,
+                horizonProfile,
+                sampler: SolarCore.makeSunSampler(SunCalc, latlng.lat, latlng.lng),
+            };
 
-            // Get astronomical sun times (textbook horizon crossing)
-            const astronomicalSunTimes = SunCalc.getTimes(this.currentDate, latlng.lat, latlng.lng);
-
-            // Calculate terrain-aware sun times using horizon profile
-            console.log('Calculating terrain-aware sun times...');
-            const terrainSunTimes = await this.calculateTerrainAwareSunTimes(
-                latlng.lat, latlng.lng, terrainData.elevation, horizonProfile
-            );
-
-            // Calculate slope sun times using horizon profile
-            console.log('Calculating slope sun times...');
-            const slopeTimes = await this.calculateSlopeSunTimes(
-                latlng.lat, latlng.lng, terrainData, horizonProfile
-            );
-
-            // Update sun timeline
-            const formatTime = (date) => date ? date.toTimeString().slice(0, 5) : '--:--';
-
-            // Astronomical times (textbook)
-            document.getElementById('astronomical-sunrise').textContent = formatTime(astronomicalSunTimes.sunrise);
-            document.getElementById('astronomical-sunset').textContent = formatTime(astronomicalSunTimes.sunset);
-
-            // Terrain-aware times
-            document.getElementById('sunrise-time').textContent = formatTime(terrainSunTimes.sunrise);
-            document.getElementById('sunset-time').textContent = formatTime(terrainSunTimes.sunset);
-            document.getElementById('slope-sun-start').textContent = formatTime(slopeTimes.slopeStart);
-            document.getElementById('slope-sun-end').textContent = formatTime(slopeTimes.slopeEnd);
-
-            // Update current exposure
-            document.getElementById('current-exposure').textContent = Math.round(exposure * 100);
-
-            const inShadow = exposure === 0 && this.sunAltitude > 0;
-            const status = this.sunAltitude < 0 ? '🌙 Night' :
-                          inShadow ? '🌑 Shadow' :
-                          exposure > 0.7 ? '☀️ Full Sun' :
-                          exposure > 0.3 ? '⛅ Partial' : '🌤️ Low';
-            document.getElementById('sun-status').textContent = status;
-
-            // Calculate hourly exposure
-            console.log('Calculating hourly exposure...');
-            const hourlyData = await this.calculateHourlyExposure(latlng.lat, latlng.lng, terrainData);
-
-            // Generate hourly exposure chart
-            this.updateHourlyChart(hourlyData);
-
-            // Calculate total sun hours
-            const totalSunHours = hourlyData.filter(h => h.exposure > 0).length;
-            document.getElementById('total-sun-hours').textContent = `${totalSunHours}h`;
-
-            console.log('Solar analysis complete');
-
+            this.renderAnalysis();
         } catch (error) {
             console.error('Error calculating sun data:', error);
             alert('Error calculating solar data: ' + error.message);
@@ -858,286 +406,100 @@ class SolarExposureMap {
         document.getElementById('loading').classList.remove('active');
     }
 
+    // Re-render the whole sidebar from cached per-click state. Pure math —
+    // safe to call on every date change.
+    renderAnalysis() {
+        if (!this.analysis) return;
+        const { latlng, terrainData, horizonProfile, sampler } = this.analysis;
+        const tz = this.timeZone;
+        const fmt = (d) => SolarCore.formatTimeInZone(d, tz, { hour12: false });
+
+        document.getElementById('empty-state').style.display = 'none';
+        document.getElementById('solar-data').style.display = 'block';
+
+        document.getElementById('location-coords').textContent =
+            `${latlng.lat.toFixed(6)}°, ${latlng.lng.toFixed(6)}°`;
+
+        const dayStart = SolarCore.zonedMidnightUTC(this.dateStr, tz);
+        const localNoon = new Date(dayStart.getTime() + 12 * 3600 * 1000);
+        document.getElementById('tz-label').textContent =
+            `All times in ${SolarCore.zoneAbbreviation(localNoon, tz)} (${tz})`;
+
+        document.getElementById('elevation-value').textContent = Math.round(terrainData.elevation);
+        document.getElementById('slope-value').textContent = terrainData.slope.toFixed(1);
+        document.getElementById('aspect-value').textContent =
+            `${this.getAspectDirection(terrainData.aspect)} (${terrainData.aspect.toFixed(0)}°) - ` +
+            `${this.getSlopeFacing(terrainData.aspect)} facing`;
+
+        // One visibility-interval computation drives every terrain-aware time.
+        const horizonFn = (az) => SolarCore.horizonAt(horizonProfile, az);
+        const day = SolarCore.computeSunDay(sampler, horizonFn, dayStart, {
+            slope: terrainData.slope,
+            aspect: terrainData.aspect,
+        });
+        const astronomical = SunCalc.getTimes(localNoon, latlng.lat, latlng.lng);
+
+        document.getElementById('astronomical-sunrise').textContent = fmt(astronomical.sunrise);
+        document.getElementById('astronomical-sunset').textContent = fmt(astronomical.sunset);
+        document.getElementById('sunrise-time').textContent = fmt(day.terrainSunrise);
+        document.getElementById('sunset-time').textContent = fmt(day.terrainSunset);
+        document.getElementById('slope-sun-start').textContent = fmt(day.firstLightOnSlope);
+        document.getElementById('slope-sun-end').textContent = fmt(day.lastLightOnSlope);
+
+        document.getElementById('total-sun-hours').textContent =
+            `${(day.litSunHours ?? day.visibleSunHours).toFixed(1)}h`;
+
+        this.renderCurrentExposure();
+    }
+
+    // Current exposure % + hourly chart; cheap enough to run on slider input.
+    renderCurrentExposure() {
+        if (!this.analysis) return;
+
+        const now = this.exposureAt(this.currentTime());
+        document.getElementById('current-exposure').textContent = Math.round(now.exposure * 100);
+
+        const inShadow = now.exposure === 0 && now.altitude > 0;
+        const status = now.altitude < 0 ? '🌙 Night' :
+                      inShadow ? '🌑 Shadow' :
+                      now.exposure > 0.7 ? '☀️ Full Sun' :
+                      now.exposure > 0.3 ? '⛅ Partial' : '🌤️ Low';
+        document.getElementById('sun-status').textContent = status;
+
+        const dayStart = SolarCore.zonedMidnightUTC(this.dateStr, this.timeZone);
+        const hourlyData = [];
+        for (let hour = 0; hour < 24; hour++) {
+            const sample = this.exposureAt(new Date(dayStart.getTime() + (hour + 0.5) * 3600 * 1000));
+            hourlyData.push({ hour, exposure: sample.exposure, altitude: sample.altitude });
+        }
+        this.updateHourlyChart(hourlyData);
+    }
+
     updateHourlyChart(hourlyData) {
-        // Generate 24-hour exposure chart
         const chartBars = document.getElementById('exposure-bars');
         chartBars.innerHTML = '';
 
-        const currentHour = this.currentDate.getHours();
+        const currentHour = Math.floor(this.sliderMinutes / 60);
 
         hourlyData.forEach(data => {
             const bar = document.createElement('div');
             bar.className = 'chart-bar';
 
-            // Set height based on exposure (0-100%)
             const height = data.exposure * 100;
             bar.style.height = `${height}%`;
 
-            // Set class based on exposure
             if (data.exposure > 0) {
                 bar.classList.add('exposed');
             } else if (data.altitude > 0) {
                 bar.classList.add('shadow');
             }
 
-            // Highlight current hour
             if (data.hour === currentHour) {
                 bar.classList.add('current');
             }
 
             chartBars.appendChild(bar);
         });
-    }
-
-    calculateComprehensiveSunData(lat, lng, terrainData) {
-        // Calculate sunrise, sunset, and sun hours for this location
-
-        const sunTimes = SunCalc.getTimes(this.currentDate, lat, lng);
-
-        // Get sunrise and sunset times
-        const sunrise = sunTimes.sunrise;
-        const sunset = sunTimes.sunset;
-
-        // Calculate total sun hours
-        let sunHours = 0;
-        if (sunrise && sunset && !isNaN(sunrise) && !isNaN(sunset)) {
-            sunHours = (sunset - sunrise) / (1000 * 60 * 60); // Convert ms to hours
-        }
-
-        // Adjust for slope aspect - south-facing slopes get more sun
-        const aspectFactor = this.getAspectSunFactor(terrainData.aspect);
-        const effectiveSunHours = sunHours * aspectFactor;
-
-        return {
-            sunrise: sunrise && !isNaN(sunrise) ? sunrise.toTimeString().slice(0, 5) : null,
-            sunset: sunset && !isNaN(sunset) ? sunset.toTimeString().slice(0, 5) : null,
-            sunHours: effectiveSunHours,
-            totalDaylightHours: sunHours
-        };
-    }
-
-    getAspectSunFactor(aspect) {
-        // Calculate sun factor based on aspect
-        // South (180°) = 1.0 (maximum sun)
-        // North (0°) = 0.5 (minimum sun)
-        // East/West (90°/270°) = 0.75 (moderate)
-
-        const southDiff = Math.abs(aspect - 180);
-        const normalizedDiff = Math.min(southDiff, 360 - southDiff);
-
-        // Map 0° (south) to 1.0, 180° (north) to 0.5
-        return 0.5 + 0.5 * (1 - normalizedDiff / 180);
-    }
-
-    async calculateTerrainAwareSunTimes(lat, lng, elevation, horizonProfile) {
-        // Calculate when sun actually appears/disappears considering terrain occlusions
-        // Uses pre-calculated horizon profile for accurate terrain blocking
-        const date = this.currentDate;
-        const sunTimes = SunCalc.getTimes(date, lat, lng);
-
-        let terrainSunrise = sunTimes.sunrise;
-        let terrainSunset = sunTimes.sunset;
-
-        // Check if terrain blocks sunrise (eastern mountains)
-        if (sunTimes.sunrise && !isNaN(sunTimes.sunrise)) {
-            // Walk forward from astronomical sunrise to find when sun clears terrain
-            for (let i = 0; i < 180; i += 5) { // Check up to 3 hours after sunrise (in 5-min steps)
-                const testDate = new Date(sunTimes.sunrise.getTime() + i * 60 * 1000);
-                const testPos = SunCalc.getPosition(testDate, lat, lng);
-                const testAlt = testPos.altitude * 180 / Math.PI;
-                const testAz = ((testPos.azimuth * 180 / Math.PI) + 180) % 360;
-
-                if (testAlt > 0) {
-                    const horizonAngle = this.getHorizonAngle(horizonProfile, testAz);
-
-                    // Sun is visible when altitude > horizon angle
-                    if (testAlt > horizonAngle) {
-                        terrainSunrise = testDate;
-                        break;
-                    }
-                }
-            }
-        }
-
-        // Check if terrain blocks sunset (western mountains)
-        if (sunTimes.sunset && !isNaN(sunTimes.sunset)) {
-            // Walk backward from astronomical sunset to find when terrain starts blocking
-            for (let i = 0; i < 180; i += 5) { // Check up to 3 hours before sunset (in 5-min steps)
-                const testDate = new Date(sunTimes.sunset.getTime() - i * 60 * 1000);
-                const testPos = SunCalc.getPosition(testDate, lat, lng);
-                const testAlt = testPos.altitude * 180 / Math.PI;
-                const testAz = ((testPos.azimuth * 180 / Math.PI) + 180) % 360;
-
-                if (testAlt > 0) {
-                    const horizonAngle = this.getHorizonAngle(horizonProfile, testAz);
-
-                    // If sun is still visible, update terrain sunset
-                    if (testAlt > horizonAngle) {
-                        terrainSunset = testDate;
-                    } else {
-                        // Sun blocked, found the cutoff
-                        break;
-                    }
-                }
-            }
-        }
-
-        return {
-            sunrise: terrainSunrise,
-            sunset: terrainSunset
-        };
-    }
-
-    async calculateSlopeSunTimes(lat, lng, terrainData, horizonProfile) {
-        // Calculate EXACT times when sun hits and leaves this specific slope
-        // Uses pre-calculated horizon profile for accurate terrain occlusion
-
-        const date = this.currentDate;
-        let slopeStartTime = null;
-        let slopeEndTime = null;
-        let lastExposedTime = null;
-
-        const startOfDay = new Date(date);
-        startOfDay.setHours(0, 0, 0, 0);
-
-        let wasExposed = false;
-
-        // Check every 15 minutes throughout the day
-        for (let minutes = 0; minutes < 1440; minutes += 15) {
-            const testTime = new Date(startOfDay);
-            testTime.setMinutes(minutes);
-
-            const sunPos = SunCalc.getPosition(testTime, lat, lng);
-            const sunAltitude = sunPos.altitude * 180 / Math.PI;
-            const sunAzimuth = ((sunPos.azimuth * 180 / Math.PI) + 180) % 360;
-
-            // Check if sun is above horizon
-            if (sunAltitude <= 0) {
-                if (wasExposed) {
-                    slopeEndTime = lastExposedTime;
-                    wasExposed = false;
-                }
-                continue;
-            }
-
-            // Get horizon angle in sun's direction
-            const horizonAngle = this.getHorizonAngle(horizonProfile, sunAzimuth);
-
-            // Sun is blocked if altitude < horizon angle
-            const sunBlocked = sunAltitude < horizonAngle;
-
-            // Check if sun is facing the slope (dot product test)
-            const slopeFacing = this.isSlopeFacingSun(
-                terrainData.aspect,
-                terrainData.slope,
-                sunAzimuth,
-                sunAltitude
-            );
-
-            // Slope is exposed if: sun above horizon, not blocked, and facing slope
-            const isExposed = !sunBlocked && slopeFacing;
-
-            if (isExposed) {
-                lastExposedTime = new Date(testTime);
-
-                if (!wasExposed) {
-                    slopeStartTime = new Date(testTime);
-                    wasExposed = true;
-                }
-            } else if (wasExposed) {
-                slopeEndTime = new Date(testTime);
-                wasExposed = false;
-            }
-        }
-
-        // If still exposed at end of day, use last exposure time
-        if (wasExposed && lastExposedTime) {
-            slopeEndTime = lastExposedTime;
-        }
-
-        return {
-            slopeStart: slopeStartTime,
-            slopeEnd: slopeEndTime
-        };
-    }
-
-    isSlopeFacingSun(aspect, slope, sunAzimuth, sunAltitude) {
-        // Calculate if sun is facing the slope using dot product
-        const slopeRad = slope * Math.PI / 180;
-        const aspectRad = aspect * Math.PI / 180;
-        const sunAltRad = sunAltitude * Math.PI / 180;
-        const sunAzRad = sunAzimuth * Math.PI / 180;
-
-        // Slope normal vector (pointing outward from slope surface)
-        const slopeNx = Math.sin(slopeRad) * Math.sin(aspectRad);
-        const slopeNy = Math.sin(slopeRad) * Math.cos(aspectRad);
-        const slopeNz = Math.cos(slopeRad);
-
-        // Sun direction vector (pointing toward sun)
-        const sunDx = Math.cos(sunAltRad) * Math.sin(sunAzRad);
-        const sunDy = Math.cos(sunAltRad) * Math.cos(sunAzRad);
-        const sunDz = Math.sin(sunAltRad);
-
-        // Dot product - positive means sun is facing the slope
-        const dotProduct = slopeNx * sunDx + slopeNy * sunDy + slopeNz * sunDz;
-
-        return dotProduct > 0;
-    }
-
-    async calculateHourlyExposure(lat, lng, terrainData) {
-        // Calculate sun exposure for each hour of the day (0-23)
-        const hourlyData = [];
-        const date = this.currentDate;
-        const startOfDay = new Date(date);
-        startOfDay.setHours(0, 0, 0, 0);
-
-        for (let hour = 0; hour < 24; hour++) {
-            const testTime = new Date(startOfDay);
-            testTime.setHours(hour);
-
-            const sunPos = SunCalc.getPosition(testTime, lat, lng);
-            const altitude = sunPos.altitude * 180 / Math.PI;
-            const azimuth = ((sunPos.azimuth * 180 / Math.PI) + 180) % 360;
-
-            let exposure = 0;
-
-            if (altitude > 0) {
-                // Update temporary sun position
-                const oldAlt = this.sunAltitude;
-                const oldAz = this.sunAzimuth;
-                this.sunAltitude = altitude;
-                this.sunAzimuth = azimuth;
-
-                exposure = await this.calculateExposure(
-                    terrainData.aspect,
-                    terrainData.slope,
-                    terrainData.elevation,
-                    lat,
-                    lng
-                );
-
-                // Restore original sun position
-                this.sunAltitude = oldAlt;
-                this.sunAzimuth = oldAz;
-            }
-
-            hourlyData.push({
-                hour,
-                exposure,
-                altitude,
-                azimuth
-            });
-        }
-
-        return hourlyData;
-    }
-
-    updateHoverInfo(e) {
-        const popup = document.getElementById('info-popup');
-
-        // Position popup near cursor
-        popup.style.left = (e.originalEvent.clientX + 15) + 'px';
-        popup.style.top = (e.originalEvent.clientY + 15) + 'px';
     }
 
     getAspectDirection(aspect) {
@@ -1147,12 +509,6 @@ class SolarExposureMap {
     }
 
     getSlopeFacing(aspect) {
-        // Determine slope facing relative to sun position
-        // North-facing (315-45°): Gets less sun, colder
-        // South-facing (135-225°): Gets more sun, warmer
-        // East-facing (45-135°): Morning sun
-        // West-facing (225-315°): Afternoon sun
-
         if (aspect >= 315 || aspect < 45) {
             return '❄️ North'; // Cold, shaded
         } else if (aspect >= 45 && aspect < 135) {
@@ -1165,41 +521,32 @@ class SolarExposureMap {
     }
 
     toggleAnimation() {
-        const button = document.getElementById('animate-button');
+        const buttons = this.controlEls('animate-button');
 
         if (this.animationInterval) {
-            // Stop animation
             clearInterval(this.animationInterval);
             this.animationInterval = null;
-            button.textContent = 'Animate';
-            button.classList.add('btn-secondary');
-            button.classList.remove('btn-primary');
+            buttons.forEach((b) => {
+                b.textContent = 'Animate';
+                b.classList.add('btn-secondary');
+                b.classList.remove('btn-primary');
+            });
         } else {
-            // Start animation
-            button.textContent = 'Stop';
-            button.classList.add('btn-primary');
-            button.classList.remove('btn-secondary');
-
-            const slider = document.getElementById('time-slider');
-            const startMinutes = parseInt(slider.value);
-            let currentMinutes = startMinutes;
+            buttons.forEach((b) => {
+                b.textContent = 'Stop';
+                b.classList.add('btn-primary');
+                b.classList.remove('btn-secondary');
+            });
 
             this.animationInterval = setInterval(() => {
-                currentMinutes += 15; // 15 minute steps
+                this.sliderMinutes = (this.sliderMinutes + 15) % 1440;
+                if (this.sliderMinutes > 1425) this.sliderMinutes = 0;
 
-                if (currentMinutes > 1440) {
-                    currentMinutes = 0;
-                }
-
-                slider.value = currentMinutes;
-                this.updateTimeDisplay(currentMinutes);
-
-                const hours = Math.floor(currentMinutes / 60);
-                const mins = currentMinutes % 60;
-                this.currentDate.setHours(hours, mins);
-
+                this.controlEls('time-slider').forEach((el) => { el.value = this.sliderMinutes; });
+                this.updateTimeDisplay();
                 this.updateSunPosition();
-            }, 200); // Update every 200ms for smooth animation
+                this.renderCurrentExposure();
+            }, 200);
         }
     }
 }
